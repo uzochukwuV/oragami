@@ -8,7 +8,7 @@ const navLinks = [
   { name: "How it works", href: "#how-it-works" },
   { name: "Features", href: "#features" },
   { name: "Metrics", href: "#studio" },
-  { name: "Launch App", href: "/app" },
+  { name: "Launch App", href: "/app/dashboard" },
 ];
 
 export function Navigation() {
@@ -77,7 +77,7 @@ export function Navigation() {
               asChild
               className={`bg-foreground hover:bg-foreground/90 text-background rounded-full transition-all duration-500 ${isScrolled ? "px-4 h-8 text-xs" : "px-6"}`}
             >
-              <a href="/app">Launch App</a>
+              <a href="/app/dashboard">Launch App</a>
             </Button>
           </div>
 
@@ -135,7 +135,7 @@ export function Navigation() {
               onClick={() => setIsMobileMenuOpen(false)}
               asChild
             >
-              <a href="/app">Launch App</a>
+              <a href="/app/dashboard">Launch App</a>
             </Button>
           </div>
         </div>

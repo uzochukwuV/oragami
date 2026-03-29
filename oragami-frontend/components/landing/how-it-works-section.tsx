@@ -5,74 +5,112 @@ import { useEffect, useRef, useState } from "react";
 const steps = [
   {
     number: "I",
-    title: "Get your compliance credential",
+    title: "Get credentialed",
     description:
-      "The vault authority issues a soulbound ComplianceCredential PDA to your wallet. KYC level, AML score, jurisdiction, and expiry are stored on-chain. No credential — no deposit. This is enforced at the smart contract level.",
-    code: `// Issue on-chain credential
+      "The vault authority issues a soulbound ComplianceCredential PDA to your institution wallet. KYC level, AML score, jurisdiction, and expiry are stored on-chain. No credential — no entry. Enforced at the contract level, not off-chain.",
+    code: `// Soulbound on-chain credential
 await program.methods
-  .issueCredential({
+  .issueCredential(
+    toBytes64("AMINA Bank AG"),
+    toBytes4("CH"),
+    3,   // tier: institutional
+    3,   // kyc_level: full
+    95,  // aml_coverage: 95/100
+    expiresAt
+  )
+  .accounts({
+    factory: factoryPda,
+    credential: credentialPda,
     wallet: institution.publicKey,
-    institutionName: toBytes64(
-      "AMINA Bank AG"
-    ),
-    jurisdiction: toBytes4("CH"),
-    tier: 3,          // institutional
-    kycLevel: 3,      // full KYC
-    amlCoverage: 95,  // 0-100 score
-    attestationHash,  // SHA-256 of docs
-    issuedAt: now,
-    expiresAt: now + 365days,
+    authority: vaultAuthority,
   })
-  .rpc();`,
+  .rpc();
+
+// Stored on-chain:
+// ✓ KYC level 3 (full)
+// ✓ AML score 95/100
+// ✓ Jurisdiction: CH
+// ✓ Expires: 2027-03-29`,
   },
   {
     number: "II",
-    title: "Deposit USDC, receive cVAULT",
+    title: "Deposit assets, vault takes custody",
     description:
-      "Deposit USDC into the vault. The contract checks your credential on-chain, then mints cVAULT at the current NAV price — driven by live Gold and CHF/USD data from SIX Exchange. Large deposits require Travel Rule data.",
-    code: `// NAV-priced deposit
-// Current NAV: $1.0430 per cVAULT
-// Deposit: 100 USDC
-// Receive: 95.78 cVAULT
+      "Institution A deposits tokenized Gold. The vault PDA takes custody of the asset tokens — they move on-chain into the vault's token account. VAULT-GOLD shares are minted to the institution at the current SIX Exchange NAV price. The vault is now the custodian.",
+    code: `// Institution A deposits 1000 GOLD-mock
+// Current NAV: $1.00 per share
+// Vault receives: 1000 GOLD-mock tokens
+// Institution A receives: 1000 VAULT-GOLD
 
 await program.methods
-  .deposit({
-    amount: new BN(100_000_000), // 100 USDC
-    nonce: uuidv7(),
-  })
+  .deposit(new BN(1_000_000_000))
   .accounts({
-    investorCredential: credentialPda,
-    travelRuleData: null, // < 1000 USDC
-    ...vaultAccounts,
+    assetVault: goldVaultPda,
+    shareMint: vaultGoldMint,
+    vaultTokenAccount,      // ← vault holds gold
+    depositorAssetAccount,  // ← gold leaves here
+    depositorShareAccount,  // ← shares arrive here
+    credential: credentialPda,
   })
   .rpc();
 
-// On-chain: credential verified ✓
-// On-chain: cVAULT minted at NAV ✓`,
+// On-chain:
+// ✓ Credential verified
+// ✓ 1000 GOLD-mock in vault custody
+// ✓ 1000 VAULT-GOLD minted to A`,
   },
   {
     number: "III",
-    title: "Earn yield, trade on secondary market",
+    title: "Exchange positions through the vault",
     description:
-      "Yield accrues daily on-chain via process_yield. Convert cVAULT to cVAULT-TRADE to access the permissioned secondary market. Every transfer triggers the compliance hook — only whitelisted institutions can trade.",
-    code: `// Daily yield accrual (backend crank)
-await program.methods
-  .processYield()
-  .rpc();
-// pending_yield += deposits
-//   * usx_alloc_bps/10000
-//   * apy_bps/10000 / 365
+      "Institution A transfers VAULT-GOLD to Institution B. The vault validates both credentials before the transfer executes — sender and receiver must both be KYC-cleared. The underlying gold never moves. The vault remains custodian throughout. Zero counterparty risk.",
+    code: `// Institution A sells position to B
+// Both must hold active credentials
+// Underlying gold stays in vault custody
 
-// Convert to tradeable
 await program.methods
-  .convertToTradeable({ amount })
+  .transferShares(new BN(500_000_000))
+  .accounts({
+    assetVault: goldVaultPda,
+    senderShareAccount,    // Institution A
+    receiverShareAccount,  // Institution B
+    senderCredential,      // ✓ A: KYC active
+    receiverCredential,    // ✓ B: KYC active
+    sender: institutionA,
+  })
   .rpc();
 
-// Transfer hook fires on every trade:
-// ✓ KYC verified
-// ✓ AML clear
-// ✓ Travel Rule satisfied
-// ✓ Credential not expired`,
+// On-chain:
+// ✓ Both credentials verified
+// ✓ 500 VAULT-GOLD: A → B
+// ✓ Gold stays in vault
+// ✓ TransferMade event emitted`,
+  },
+  {
+    number: "IV",
+    title: "Redeem at NAV, vault releases custody",
+    description:
+      "Institution B redeems VAULT-GOLD shares. The vault burns the shares and releases the underlying gold tokens back to the institution at the current NAV price. If gold appreciated since deposit, the institution receives more tokens per share. No credential check on exit — institutions can always leave.",
+    code: `// Institution B redeems 500 VAULT-GOLD
+// NAV has moved: $1.00 → $1.05 (+5%)
+// 500 shares × 1.05 = 525 GOLD-mock returned
+
+await program.methods
+  .redeem(new BN(500_000_000))
+  .accounts({
+    assetVault: goldVaultPda,
+    shareMint: vaultGoldMint,
+    vaultTokenAccount,      // ← gold leaves vault
+    redeemerShareAccount,   // ← shares burned
+    redeemerAssetAccount,   // ← gold arrives here
+  })
+  .rpc();
+
+// On-chain:
+// ✓ 500 VAULT-GOLD burned
+// ✓ 525 GOLD-mock released to B
+// ✓ RedeemMade event emitted
+// ✓ 5% gain captured at NAV`,
   },
 ];
 
@@ -120,9 +158,9 @@ export function HowItWorksSection() {
               isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            Three steps.
+            Four steps.
             <br />
-            <span className="text-background/50">Fully compliant on-chain.</span>
+            <span className="text-background/50">Vault as central counterparty.</span>
           </h2>
         </div>
 
@@ -191,7 +229,7 @@ export function HowItWorksSection() {
               </div>
               <div className="px-6 py-4 border-t border-background/10 flex items-center gap-3">
                 <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-xs font-mono text-background/40">Devnet · {`ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP`.slice(0, 8)}...</span>
+                <span className="text-xs font-mono text-background/40">Devnet · 6Mbzwuw8...{` `}multi-asset-vault</span>
               </div>
             </div>
           </div>

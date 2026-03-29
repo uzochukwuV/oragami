@@ -111,7 +111,7 @@ Landing → "Launch App"
 
 ---
 
-### ISSUE #FE-01 — API client layer (`shared/api/index.ts`)
+### ISSUE #FE-01 — API client layer (`shared/api/index.ts`) ✅ COMPLETED
 **Labels:** `foundation` `blocking`
 **Estimate:** 1 hour
 
@@ -159,7 +159,7 @@ getCrankHealth()                         // GET /health/cranks
 
 ---
 
-### ISSUE #FE-02 — Wallet provider + credential middleware
+### ISSUE #FE-02 — Wallet provider + credential middleware ✅ COMPLETED
 **Labels:** `foundation` `blocking`
 **Estimate:** 1.5 hours
 **Depends on:** #FE-01

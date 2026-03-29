@@ -2,6 +2,7 @@ import React from "react"
 import type { Metadata } from 'next'
 import { Instrument_Sans, Instrument_Serif, JetBrains_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import { WalletProvider } from '@/features/wallet/ui/WalletProvider'
 import './globals.css'
 
 const instrumentSans = Instrument_Sans({ 
@@ -34,7 +35,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
-        {children}
+        <WalletProvider>
+          {children}
+        </WalletProvider>
         <Analytics />
       </body>
     </html>

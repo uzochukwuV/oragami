@@ -9,6 +9,7 @@ const features = [
     description:
       "cVAULT is priced against a real basket: 50% Gold (XAU/USD) + 30% CHF/USD from SIX Exchange. NAV updates on-chain after every price feed. Deposit 100 USDC at NAV $1.043 and receive 95.78 cVAULT — not a stablecoin, a real asset-backed instrument.",
     visual: "deploy",
+    badge: null,
   },
   {
     number: "02",
@@ -16,6 +17,7 @@ const features = [
     description:
       "Every wallet must hold a soulbound ComplianceCredential PDA before depositing. KYC level, AML coverage score, jurisdiction, and expiry are stored on-chain. Deposits above 1000 USDC require Travel Rule data. The transfer hook blocks non-whitelisted wallets at the token level — no off-chain bypass possible.",
     visual: "security",
+    badge: null,
   },
   {
     number: "03",
@@ -23,6 +25,7 @@ const features = [
     description:
       "70% of deposits are allocated to the yield strategy. A backend crank calls process_yield daily, accruing yield on-chain into pending_yield. distribute_yield mints mock USX tokens to the vault — a transparent, auditable yield trail. In production: Solstice USX CPI replaces the mock.",
     visual: "ai",
+    badge: null,
   },
   {
     number: "04",
@@ -30,6 +33,15 @@ const features = [
     description:
       "Convert cVAULT to cVAULT-TRADE for secondary market trading. Every transfer triggers the compliance hook — KYC expiry, AML status, and Travel Rule are validated on-chain automatically. Only whitelisted institutions can trade. Redeem cVAULT-TRADE back to USDC at current NAV at any time.",
     visual: "collab",
+    badge: null,
+  },
+  {
+    number: "05",
+    title: "Multi-Asset Vault Factory",
+    description:
+      "The next evolution: institutions deposit actual tokenized assets — Gold, Silver, T-bills — directly into per-asset vaults. Each asset gets its own share token (VAULT-GOLD, VAULT-SILVER) priced at live NAV. One factory program, unlimited asset classes. The same compliance credential gates every vault. Built and deployed on devnet.",
+    visual: "factory",
+    badge: "Live on Devnet",
   },
 ];
 
@@ -137,12 +149,52 @@ function SecurityVisual() {
   );
 }
 
+function FactoryVisual() {
+  return (
+    <svg viewBox="0 0 200 160" className="w-full h-full">
+      {/* Central factory node */}
+      <rect x="75" y="60" width="50" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="2" />
+      <text x="100" y="85" textAnchor="middle" fontSize="9" fontFamily="monospace" fill="currentColor" opacity="0.8">FACTORY</text>
+      {/* GOLD vault */}
+      <rect x="10" y="20" width="44" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="32" y="32" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor">VAULT</text>
+      <text x="32" y="42" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.7">GOLD</text>
+      {/* SILVER vault */}
+      <rect x="146" y="20" width="44" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="168" y="32" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor">VAULT</text>
+      <text x="168" y="42" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.7">SILVER</text>
+      {/* Future vault */}
+      <rect x="78" y="118" width="44" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 2" opacity="0.4" />
+      <text x="100" y="130" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.4">VAULT</text>
+      <text x="100" y="140" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.4">T-BILL</text>
+      {/* Connecting lines */}
+      <line x1="54" y1="34" x2="75" y2="70" stroke="currentColor" strokeWidth="1" opacity="0.3" />
+      <line x1="146" y1="34" x2="125" y2="70" stroke="currentColor" strokeWidth="1" opacity="0.3" />
+      <line x1="100" y1="100" x2="100" y2="118" stroke="currentColor" strokeWidth="1" opacity="0.2" strokeDasharray="3 2" />
+      {/* Animated share tokens flowing out */}
+      <circle r="3" fill="currentColor" opacity="0.8">
+        <animateMotion dur="2s" repeatCount="indefinite" begin="0s">
+          <mpath href="#goldPath" />
+        </animateMotion>
+      </circle>
+      <circle r="3" fill="currentColor" opacity="0.8">
+        <animateMotion dur="2s" repeatCount="indefinite" begin="1s">
+          <mpath href="#silverPath" />
+        </animateMotion>
+      </circle>
+      <path id="goldPath" d="M 75 70 L 54 34" fill="none" />
+      <path id="silverPath" d="M 125 70 L 146 34" fill="none" />
+    </svg>
+  );
+}
+
 function AnimatedVisual({ type }: { type: string }) {
   switch (type) {
     case "deploy": return <DeployVisual />;
     case "ai": return <AIVisual />;
     case "collab": return <CollabVisual />;
     case "security": return <SecurityVisual />;
+    case "factory": return <FactoryVisual />;
     default: return <DeployVisual />;
   }
 }
@@ -160,6 +212,8 @@ function FeatureCard({ feature, index }: { feature: typeof features[0]; index: n
     return () => observer.disconnect();
   }, []);
 
+  const isUpcoming = feature.badge !== null;
+
   return (
     <div
       ref={cardRef}
@@ -168,9 +222,21 @@ function FeatureCard({ feature, index }: { feature: typeof features[0]; index: n
       }`}
       style={{ transitionDelay: `${index * 100}ms` }}
     >
-      <div className="flex flex-col lg:flex-row gap-8 lg:gap-16 py-12 lg:py-20 border-b border-foreground/10">
-        <div className="shrink-0">
+      <div className={`flex flex-col lg:flex-row gap-8 lg:gap-16 py-12 lg:py-20 border-b border-foreground/10 ${
+        isUpcoming ? "relative" : ""
+      }`}>
+        {/* Subtle highlight for the new feature */}
+        {isUpcoming && (
+          <div className="absolute inset-0 -mx-6 lg:-mx-12 bg-foreground/[0.02] border-l-2 border-foreground/20 pointer-events-none" />
+        )}
+        <div className="shrink-0 flex flex-col gap-2">
           <span className="font-mono text-sm text-muted-foreground">{feature.number}</span>
+          {feature.badge && (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-mono bg-green-500/10 text-green-500 border border-green-500/20 whitespace-nowrap">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              {feature.badge}
+            </span>
+          )}
         </div>
         <div className="flex-1 grid lg:grid-cols-2 gap-8 items-center">
           <div>

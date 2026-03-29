@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { AnimatedSphere } from "./animated-sphere";
 
-const words = ["deposit", "earn", "comply", "trade"];
+const words = ["deposit", "custody", "comply", "exchange"];
 
 export function HeroSection() {
   const [isVisible, setIsVisible] = useState(false);
@@ -95,9 +95,12 @@ export function HeroSection() {
               isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            Deposit USDC into a Gold + CHF-backed vault. Mint cVAULT at live NAV
-            prices from SIX Exchange. Earn yield. Every transfer enforced
-            on-chain by KYC/AML compliance hooks.
+            Institutions deposit tokenized assets — Gold, Silver, T-bills —
+            directly into on-chain vaults. The vault holds custody. Institutions
+            receive share tokens priced at live NAV from SIX Exchange. Positions
+            transfer between credentialed institutions through the vault as
+            central counterparty. KYC, AML, and Travel Rule enforced at the
+            contract level on every operation.
           </p>
 
           <div
@@ -110,7 +113,7 @@ export function HeroSection() {
               className="bg-foreground hover:bg-foreground/90 text-background px-8 h-14 text-base rounded-full group"
               asChild
             >
-              <a href="/app">
+              <a href="/app/dashboard">
                 Open Vault
                 <ArrowRight className="w-4 h-4 ml-2 transition-transform group-hover:translate-x-1" />
               </a>
@@ -137,10 +140,11 @@ export function HeroSection() {
           {[...Array(2)].map((_, i) => (
             <div key={i} className="flex gap-16">
               {[
-                { value: "5.0%", label: "target APY via mock USX", company: "YIELD" },
-                { value: "70%", label: "allocated to yield strategy", company: "ALLOCATION" },
-                { value: "NAV", label: "priced by SIX Exchange data", company: "PRICING" },
+                { value: "5.0%", label: "target APY via Solstice USX", company: "YIELD" },
+                { value: "0", label: "counterparty risk between institutions", company: "ESCROW" },
+                { value: "NAV", label: "priced by SIX Exchange live data", company: "PRICING" },
                 { value: "100%", label: "on-chain compliance enforcement", company: "COMPLIANCE" },
+                { value: "2", label: "tokenized asset vaults live on devnet", company: "GOLD · SILVER" },
               ].map((stat) => (
                 <div key={`${stat.company}-${i}`} className="flex items-baseline gap-4">
                   <span className="text-4xl lg:text-5xl font-display">{stat.value}</span>

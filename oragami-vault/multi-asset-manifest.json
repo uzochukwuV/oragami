@@ -1,0 +1,16 @@
+{
+  "network": "devnet",
+  "programId": "6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D",
+  "authority": "NhLNMc72xiKDfVMpCWkoW6CrfMmaAcCvjpWAsDpFYqY",
+  "factoryPda": "QptPrWWxj9C8ic99Vfs8ZpBpmU2bDE97HeRbM7mGYDc",
+  "goldMint": "BhCyDVoX6v9LYuBp8HghpTFQLXTFa1aHSm91H7kwtk71",
+  "goldVaultPda": "HcSgtjZFzEytzwZpUZBdx44QPm18YFcLfm18HdhnJw5U",
+  "goldShareMint": "GcBfD1MWy7aEFWt9rrof75AnKsyNzxLvnZzNcQmXd5EA",
+  "goldVaultTokenAccount": "CYvjsniW2UQWPdL8FxUgvdPBP6ReyAm5hnXU9ZanZcua",
+  "silverMint": "68vm7gsB52QN13JDnkm51HoGcFYSKbikmNyM3AHC46Qi",
+  "silverVaultPda": "HqpUu8GwhV563sx6MJftHZCw37cah8rsZYaKSqoh8K2T",
+  "silverShareMint": "13Tk2znHhMy2yp6NYypfWjsCs8KdUPWYVKuxocdeCbvU",
+  "silverVaultTokenAccount": "Fe6PgAJMsbjmKKZHishSH167c7x4iYV9zneaFz6hTh1E",
+  "credentialPda": "B3eUkiv2qsDYPkemmczNyeKmvRd9NnGm5fAtHfsudkMU",
+  "deployedAt": "2026-03-29T13:26:44.931Z"
+}

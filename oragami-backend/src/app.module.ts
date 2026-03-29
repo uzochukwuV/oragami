@@ -12,6 +12,7 @@ import { DepositsModule } from './deposits/deposits.module';
 import { VaultModule } from './vault/vault.module';
 import { HealthModule } from './health/health.module';
 import { CrankModule } from './crank/crank.module';
+import { MultiAssetVaultModule } from './multi-asset-vault/multi-asset-vault.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CrankModule } from './crank/crank.module';
     VaultModule,
     HealthModule,
     CrankModule,
+    MultiAssetVaultModule,
   ],
   controllers: [AppController],
   providers: [AppService],
