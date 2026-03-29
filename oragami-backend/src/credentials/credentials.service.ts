@@ -93,7 +93,7 @@ export class CredentialsService {
       create: {
         walletAddress: dto.wallet,
         name: dto.institutionName,
-        jurisdiction: dto.jurisdiction.slice(0, 2) || dto.jurisdiction,
+        jurisdiction: dto.jurisdiction.slice(0, 2),
         tier: dto.tier,
         kycLevel: dto.kycLevel,
         amlScore: dto.amlScore,
@@ -105,7 +105,7 @@ export class CredentialsService {
       },
       update: {
         name: dto.institutionName,
-        jurisdiction: dto.jurisdiction.slice(0, 2) || dto.jurisdiction,
+        jurisdiction: dto.jurisdiction.slice(0, 2),
         tier: dto.tier,
         kycLevel: dto.kycLevel,
         amlScore: dto.amlScore,

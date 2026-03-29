@@ -44,13 +44,16 @@ async function main() {
   const cvaultTradeMint = Keypair.generate();
   console.log('cVAULT-TRADE mint:', cvaultTradeMint.publicKey.toBase58());
 
+  const defaultPubkey = new PublicKey(Buffer.alloc(32));
   const tx = await program.methods
     .initializeVault({
       treasury: wallet.publicKey,
       authority: wallet.publicKey,
+      operator: defaultPubkey,
       minDeposit: new BN(1_000_000),
       maxDeposit: new BN(100_000_000_000),
       usxAllocationBps: 7000,
+      apyBps: 500,
       cvaultTradeMint: cvaultTradeMint.publicKey,
       secondaryMarketEnabled: true,
     })

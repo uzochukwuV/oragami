@@ -20,7 +20,9 @@ export class TravelRuleService {
     private readonly anchor: AnchorService,
   ) {}
 
-  async submit(dto: import('./dto/submit-travel-rule.dto').SubmitTravelRuleDto) {
+  async submit(
+    dto: import('./dto/submit-travel-rule.dto').SubmitTravelRuleDto,
+  ) {
     const amount = BigInt(dto.usdcAmount);
     if (amount < MIN_TRAVEL_RULE_USDC) {
       throw new BadRequestException(
@@ -33,7 +35,7 @@ export class TravelRuleService {
     });
     if (!institution) {
       throw new BadRequestException(
-        'Institution not found — complete credential onboarding first',
+        'Institution not found - complete credential onboarding first',
       );
     }
 
@@ -42,7 +44,10 @@ export class TravelRuleService {
     const nonceHashArr = [...nonceHash];
 
     const payer = new PublicKey(dto.wallet);
-    const [travelRulePda] = this.anchor.deriveTravelRulePda(payer, Uint8Array.from(nonceHashArr));
+    const [travelRulePda] = this.anchor.deriveTravelRulePda(
+      payer,
+      Uint8Array.from(nonceHashArr),
+    );
 
     const compliancePayload = JSON.stringify({
       originatorName: dto.originatorName,
@@ -72,8 +77,9 @@ export class TravelRuleService {
       })
       .instruction();
 
-    const { blockhash, lastValidBlockHeight } =
-      await this.anchor.getConnection().getLatestBlockhash('confirmed');
+    const { blockhash, lastValidBlockHeight } = await this.anchor
+      .getConnection()
+      .getLatestBlockhash('confirmed');
     const tx = new Transaction({
       feePayer: payer,
       recentBlockhash: blockhash,

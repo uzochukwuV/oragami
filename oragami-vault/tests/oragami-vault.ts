@@ -18,9 +18,11 @@ describe("oragami-vault", () => {
       .initializeVault({
         treasury: treasury.publicKey,
         authority: authority.publicKey,
+        operator: new anchor.web3.PublicKey(Buffer.alloc(32)),
         minDeposit: new anchor.BN(1000000), // 1 USDC minimum
         maxDeposit: new anchor.BN(10000000000), // 10,000 USDC maximum
         usxAllocationBps: 1000, // 10% to USX
+        apyBps: 500,
         cvaultTradeMint: cvaultTradeMint.publicKey,
         secondaryMarketEnabled: true,
       })

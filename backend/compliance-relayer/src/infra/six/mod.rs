@@ -8,20 +8,19 @@
 //! Uses MTLS certificate authentication as required by SIX API.
 
 use reqwest::Client;
-use reqwest::Certificate;
 use reqwest::Identity;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// SIX API configuration
 #[derive(Debug, Clone)]
 pub struct SixConfig {
     /// Base URL for SIX API
     pub base_url: String,
-    /// Path to MTLS certificate (.p12 file)
+    /// Path to MTLS certificate (.p12 file) — optional; Nest `oragami-backend` uses PEM in `six.service.ts`.
     pub cert_path: String,
     /// Certificate password
     pub cert_password: String,
@@ -90,19 +89,17 @@ pub struct SixApiClient {
 }
 
 impl SixApiClient {
-    /// Create a new SIX API client with MTLS certificate
+    /// Create a new SIX API client with MTLS certificate (PKCS#12)
     pub async fn new(config: SixConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        // Load MTLS certificate
         let cert_bytes = std::fs::read(&config.cert_path)?;
         let identity = Identity::from_pkcs12_der(&cert_bytes, &config.cert_password)?;
-        
-        // Build HTTP client with MTLS
+
         let client = Client::builder()
             .identity(identity)
             .timeout(Duration::from_secs(config.timeout_secs))
             .danger_accept_invalid_certs(false)
             .build()?;
-        
+
         info!("SIX API client initialized with MTLS certificate");
         
         Ok(Self {
@@ -119,9 +116,10 @@ impl SixApiClient {
         instrument_id: &str,
         market_bc: &str,
     ) -> Result<MarketDataResponse, Box<dyn std::error::Error>> {
+        let ids = format!("{}_{}", instrument_id, market_bc);
         let url = format!(
-            "{}/web/v2/listings/marketData/intradaySnapshot?scheme={}&ids={}&marketBC={}",
-            self.config.base_url, scheme, instrument_id, market_bc
+            "{}/web/v2/listings/marketData/intradaySnapshot?scheme={}&ids={}&preferredLanguage=EN",
+            self.config.base_url, scheme, ids
         );
         
         info!("Fetching intraday snapshot for {} from SIX API", instrument_id);
@@ -180,7 +178,7 @@ impl SixApiClient {
             _ => return Err(format!("Unsupported forex pair: {}/{}", base, quote).into()),
         };
         
-        let data = self.get_intraday_snapshot("VALOR", instrument_id, "149").await?;
+        let data = self.get_intraday_snapshot("VALOR_BC", instrument_id, "149").await?;
         
         Ok(ForexRate {
             base_currency: base.to_string(),
@@ -204,7 +202,7 @@ impl SixApiClient {
             _ => return Err(format!("Unsupported precious metal: {}", metal).into()),
         };
         
-        let data = self.get_intraday_snapshot("VALOR", instrument_id, "149").await?;
+        let data = self.get_intraday_snapshot("VALOR_BC", instrument_id, "149").await?;
         
         Ok(PreciousMetalPrice {
             metal: metal.to_uppercase(),
@@ -220,7 +218,7 @@ impl SixApiClient {
         valor: &str,
         market_bc: &str,
     ) -> Result<MarketDataResponse, Box<dyn std::error::Error>> {
-        self.get_intraday_snapshot("VALOR", valor, market_bc).await
+        self.get_intraday_snapshot("VALOR_BC", valor, market_bc).await
     }
     
     /// Cache a price for later retrieval
@@ -252,7 +250,7 @@ impl SixApiClient {
         let mut total_nav = 0.0;
         
         for (instrument_id, quantity) in holdings {
-            let price_data = self.get_intraday_snapshot("VALOR", instrument_id, "65").await?;
+            let price_data = self.get_intraday_snapshot("VALOR_BC", instrument_id, "65").await?;
             total_nav += price_data.price * quantity;
         }
         

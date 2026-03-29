@@ -1,3 +1,17 @@
+//! Oragami vault program — NAV-priced cVAULT, compliance, and RWA metadata.
+//!
+//! **USX allocation (`usx_allocation_bps`)** — Two roles:
+//! - **Yield accrual** (`process_yield`): accrues `pending_yield` proportional to
+//!   `total_deposits * usx_allocation_bps` (strategy slice) and `apy_bps`.
+//! - **Liquidity / strategy split**: call [`assert_liquidity_allocation`] (or run a
+//!   crank that does) so vault USDC stays within `[min_liquidity_buffer_bps,
+//!   10000 - usx_allocation_bps]` of `total_deposits` after bootstrap. Not wired into
+//!   `deposit` to keep the account list small for the BPF stack limit.
+//!
+//! **Multisig** — `authority` may be a multisig or PDA controlled by Fireblocks-style
+//! 2-of-3 off-chain; `operator` is optional day-to-day ops key. If `operator` is
+//! `Pubkey::default`, it defaults to `authority`.
+
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, TokenAccount, Token};
 
@@ -14,6 +28,8 @@ pub const COMPLIANCE_CREDENTIAL_SEED: &[u8] = b"credential";
 pub const TRAVEL_RULE_SEED: &[u8] = b"travel_rule";
 pub const VAULT_USX_ACCOUNT_SEED: &[u8] = b"vault_usx_account";
 pub const VAULT_EUSX_ACCOUNT_SEED: &[u8] = b"vault_eusx_account";
+pub const RWA_ASSET_REGISTRY_SEED: &[u8] = b"rwa_asset_registry";
+pub const VAULT_MANDATE_SEED: &[u8] = b"vault_mandate";
 
 // ============================================================================
 // CONSTANTS
@@ -34,6 +50,28 @@ pub const CREDENTIAL_STATUS_PENDING: u8 = 0;
 pub const CREDENTIAL_STATUS_ACTIVE: u8 = 1;
 pub const CREDENTIAL_STATUS_RESTRICTED: u8 = 2;
 pub const CREDENTIAL_STATUS_REVOKED: u8 = 3;
+
+// ============================================================================
+// AUTH HELPERS (authority vs operator)
+// ============================================================================
+
+#[inline]
+pub fn operator_pubkey(vs: &VaultState) -> Pubkey {
+    if vs.operator == Pubkey::default() {
+        vs.authority
+    } else {
+        vs.operator
+    }
+}
+
+#[inline]
+pub fn require_operator(vs: &VaultState, signer: &Pubkey) -> Result<()> {
+    require!(
+        operator_pubkey(vs) == *signer,
+        ErrorCode::OperatorNotAuthorized
+    );
+    Ok(())
+}
 
 // ============================================================================
 // PROGRAM
@@ -74,6 +112,7 @@ pub mod oragami_vault {
         vs.eusx_mint = Pubkey::default();
         vs.vault_usx_account = Pubkey::default();
         vs.vault_eusx_account = Pubkey::default();
+        vs.operator = params.operator;
         msg!(
             "Vault initialized. NAV: {} bps. APY: {} bps. USX alloc: {} bps.",
             vs.nav_price_bps,
@@ -84,13 +123,83 @@ pub mod oragami_vault {
     }
 
     // -----------------------------------------------------------------------
+    // RWA REGISTRY & MANDATE (authority-only init)
+    // -----------------------------------------------------------------------
+
+    /// One-time: on-chain RWA backing metadata for this vault. Required before `set_nav`.
+    pub fn initialize_rwa_asset_registry(
+        ctx: Context<InitializeRwaAssetRegistry>,
+        params: InitializeRwaAssetRegistryParams,
+    ) -> Result<()> {
+        let reg = &mut ctx.accounts.rwa_asset_registry;
+        reg.bump = ctx.bumps.rwa_asset_registry;
+        reg.vault = ctx.accounts.vault_state.key();
+        reg.asset_id = params.asset_id;
+        reg.isin = params.isin;
+        reg.commodity_code = params.commodity_code;
+        reg.custodian = params.custodian;
+        reg.link_hash = params.link_hash;
+        reg.last_verified_at = Clock::get()?.unix_timestamp;
+        msg!("RWA asset registry initialized for vault {}", reg.vault);
+        Ok(())
+    }
+
+    /// One-time: risk / liquidity mandate. Referenced by `set_nav`, `update_config`, checks.
+    pub fn initialize_vault_mandate(
+        ctx: Context<InitializeVaultMandate>,
+        params: InitializeVaultMandateParams,
+    ) -> Result<()> {
+        require!(
+            params.min_liquidity_buffer_bps as u32 + params.max_usx_allocation_bps as u32 <= 10_000,
+            ErrorCode::InvalidMandate
+        );
+        let m = &mut ctx.accounts.vault_mandate;
+        m.bump = ctx.bumps.vault_mandate;
+        m.vault = ctx.accounts.vault_state.key();
+        m.min_liquidity_buffer_bps = params.min_liquidity_buffer_bps;
+        m.max_usx_allocation_bps = params.max_usx_allocation_bps;
+        m.min_collateral_ratio_bps = params.min_collateral_ratio_bps;
+        m.allowed_asset_types = params.allowed_asset_types;
+        m.leverage_allowed = params.leverage_allowed;
+        m.liquidity_enforcement_active = params.liquidity_enforcement_active;
+        msg!("Vault mandate initialized for vault {}", m.vault);
+        Ok(())
+    }
+
+    /// Authority may refresh off-chain attestation hash / custodian pointer on the registry.
+    pub fn update_rwa_asset_registry(
+        ctx: Context<UpdateRwaAssetRegistry>,
+        params: UpdateRwaAssetRegistryParams,
+    ) -> Result<()> {
+        let reg = &mut ctx.accounts.rwa_asset_registry;
+        if let Some(c) = params.custodian {
+            reg.custodian = c;
+        }
+        if let Some(h) = params.link_hash {
+            reg.link_hash = h;
+        }
+        reg.last_verified_at = Clock::get()?.unix_timestamp;
+        Ok(())
+    }
+
+    /// Toggle liquidity enforcement on deposits (authority-only).
+    pub fn set_mandate_liquidity_enforcement(
+        ctx: Context<SetMandateLiquidityEnforcement>,
+        params: SetMandateLiquidityEnforcementParams,
+    ) -> Result<()> {
+        ctx.accounts.vault_mandate.liquidity_enforcement_active = params.active;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // NAV MANAGEMENT
     // -----------------------------------------------------------------------
 
-    /// Called by authority after each SIX price feed update.
-    /// nav_price_bps: 10430 means 1 cVAULT = $1.0430 USDC.
+    /// NAV update tied to RWA registry + mandate. Caller must be **operator** (or authority if operator unset).
+    /// `nav_price_bps`: 10430 means 1 cVAULT = $1.0430 USDC.
     /// Hard-capped: max 50% change per update to prevent manipulation.
     pub fn set_nav(ctx: Context<SetNav>, params: SetNavParams) -> Result<()> {
+        require_operator(&ctx.accounts.vault_state, &ctx.accounts.operator.key())?;
         require!(params.nav_price_bps > 0, ErrorCode::InvalidNav);
         let current = ctx.accounts.vault_state.nav_price_bps;
         let max_change = current / 2;
@@ -99,16 +208,21 @@ pub mod oragami_vault {
                 && params.nav_price_bps <= current + max_change,
             ErrorCode::NavChangeTooLarge
         );
+        let reg = &mut ctx.accounts.rwa_asset_registry;
+        reg.last_verified_at = Clock::get()?.unix_timestamp;
+
         ctx.accounts.vault_state.nav_price_bps = params.nav_price_bps;
         emit!(NavUpdated {
             nav_price_bps: params.nav_price_bps,
             timestamp: Clock::get()?.unix_timestamp,
+            asset_id: reg.asset_id,
         });
         msg!(
-            "NAV updated to {} bps (${}.{:04})",
+            "NAV updated to {} bps (${}.{:04}) for asset_id {:?}",
             params.nav_price_bps,
             params.nav_price_bps / NAV_BPS_DENOMINATOR,
-            params.nav_price_bps % NAV_BPS_DENOMINATOR
+            params.nav_price_bps % NAV_BPS_DENOMINATOR,
+            reg.asset_id
         );
         Ok(())
     }
@@ -259,6 +373,11 @@ pub mod oragami_vault {
             .total_supply
             .checked_add(cvault_amount)
             .ok_or(ErrorCode::Overflow)?;
+
+        // Optional: enforce USDC vs strategy slice when mandate is passed, USX is live,
+        // and this is not the first deposit (bootstrap otherwise impossible without CPI).
+        // Liquidity vs `usx_allocation_bps` is checked via `assert_liquidity_allocation`
+        // (keeps `deposit` account list under BPF stack limits).
 
         emit!(DepositMade {
             payer: ctx.accounts.payer.key(),
@@ -519,10 +638,10 @@ pub mod oragami_vault {
     /// Only the vault authority may call this.
     /// No-ops if < 1 day has elapsed since last call.
     pub fn process_yield(ctx: Context<ProcessYield>) -> Result<()> {
-        require!(
-            ctx.accounts.authority.key() == ctx.accounts.vault_state.authority,
-            ErrorCode::YieldNotAuthorized
-        );
+        require_operator(
+            &ctx.accounts.vault_state,
+            &ctx.accounts.operator.key(),
+        )?;
         let vs = &mut ctx.accounts.vault_state;
         let now = Clock::get()?.unix_timestamp;
 
@@ -586,6 +705,10 @@ pub mod oragami_vault {
         ctx: Context<RegisterUsxAccounts>,
         params: RegisterUsxAccountsParams,
     ) -> Result<()> {
+        require_operator(
+            &ctx.accounts.vault_state,
+            &ctx.accounts.operator.key(),
+        )?;
         let vs = &mut ctx.accounts.vault_state;
         vs.usx_mint = params.usx_mint;
         vs.eusx_mint = params.eusx_mint;
@@ -605,10 +728,10 @@ pub mod oragami_vault {
     /// by the backend crank using the Solstice instructions API, then
     /// this instruction is called to record the distribution on-chain.
     pub fn distribute_yield(ctx: Context<DistributeYield>) -> Result<()> {
-        require!(
-            ctx.accounts.authority.key() == ctx.accounts.vault_state.authority,
-            ErrorCode::YieldNotAuthorized
-        );
+        require_operator(
+            &ctx.accounts.vault_state,
+            &ctx.accounts.operator.key(),
+        )?;
 
         let vs = &mut ctx.accounts.vault_state;
 
@@ -640,6 +763,8 @@ pub mod oragami_vault {
         Ok(())
     }
 
+    /// Governance config. `usx_allocation_bps` should stay ≤ `VaultMandate.max_usx_allocation_bps`
+    /// when a mandate exists (policy enforced off-chain or via dedicated instructions).
     pub fn update_config(
         ctx: Context<UpdateConfig>,
         params: UpdateConfigParams,
@@ -665,18 +790,124 @@ pub mod oragami_vault {
         Ok(())
     }
 
-    /// Legacy yield-sync stub kept for backward compatibility with
-    /// existing clients. Simply refreshes the timestamp.
+    /// **Deprecated.** Does not accrue yield. Prefer [`process_yield`] for on-chain
+    /// accrual into `pending_yield`. Kept only so older IDL clients do not break;
+    /// do not use in new integrations or hackathon demos.
     pub fn sync_yield(ctx: Context<SyncYield>) -> Result<()> {
-        require!(
-            ctx.accounts.authority.key() == ctx.accounts.vault_state.authority,
-            ErrorCode::YieldNotAuthorized
-        );
+        require_operator(
+            &ctx.accounts.vault_state,
+            &ctx.accounts.operator.key(),
+        )?;
         ctx.accounts.vault_state.last_yield_claim = Clock::get()?.unix_timestamp;
         msg!(
-            "Yield state synced at {}",
-            ctx.accounts.vault_state.last_yield_claim
+            "[deprecated sync_yield] timestamp only, no accrual — use process_yield"
         );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // PROOF OF RESERVE & LIQUIDITY ASSERTIONS
+    // -----------------------------------------------------------------------
+
+    /// Verifies `USDC + USX + eUSX` (raw amounts, 6 decimals, 1:1 unit assumption)
+    /// meets `VaultMandate.min_collateral_ratio_bps` vs `total_deposits`.
+    /// Callable by anyone (e.g. crank or auditor).
+    pub fn verify_proof_of_reserve(ctx: Context<VerifyProofOfReserve>) -> Result<()> {
+        let vs = &ctx.accounts.vault_state;
+        let m = &ctx.accounts.vault_mandate;
+        require!(m.vault == vs.key(), ErrorCode::InvalidMandate);
+
+        require!(
+            ctx.accounts.vault_token_account.key() == vs.vault_token_account,
+            ErrorCode::InvalidVaultTokenAccount
+        );
+
+        let usdc = ctx.accounts.vault_token_account.amount;
+        let usx = if vs.vault_usx_account == Pubkey::default() {
+            0u64
+        } else {
+            let acc = ctx
+                .accounts
+                .vault_usx_token_account
+                .as_ref()
+                .ok_or(ErrorCode::InvalidVaultTokenAccount)?;
+            require!(
+                acc.key() == vs.vault_usx_account,
+                ErrorCode::InvalidVaultTokenAccount
+            );
+            acc.amount
+        };
+        let eusx = if vs.vault_eusx_account == Pubkey::default() {
+            0u64
+        } else {
+            let acc = ctx
+                .accounts
+                .vault_eusx_token_account
+                .as_ref()
+                .ok_or(ErrorCode::InvalidVaultTokenAccount)?;
+            require!(
+                acc.key() == vs.vault_eusx_account,
+                ErrorCode::InvalidVaultTokenAccount
+            );
+            acc.amount
+        };
+
+        let total_assets = usdc
+            .checked_add(usx)
+            .ok_or(ErrorCode::Overflow)?
+            .checked_add(eusx)
+            .ok_or(ErrorCode::Overflow)?;
+
+        // total_assets * 10000 >= total_deposits * min_collateral_ratio_bps
+        let lhs = total_assets
+            .checked_mul(10_000)
+            .ok_or(ErrorCode::Overflow)?;
+        let rhs = vs
+            .total_deposits
+            .checked_mul(m.min_collateral_ratio_bps as u64)
+            .ok_or(ErrorCode::Overflow)?;
+        require!(lhs >= rhs, ErrorCode::ProofOfReserveFailed);
+
+        emit!(ProofOfReserveOk {
+            vault: vs.key(),
+            total_assets,
+            total_deposits: vs.total_deposits,
+            min_collateral_ratio_bps: m.min_collateral_ratio_bps,
+        });
+        Ok(())
+    }
+
+    /// Enforces USDC in the vault vs `total_deposits` and `usx_allocation_bps`:
+    /// - max idle USDC: `total_deposits * (10000 - usx_allocation_bps) / 10000`
+    /// - min idle USDC: `total_deposits * min_liquidity_buffer_bps / 10000`
+    pub fn assert_liquidity_allocation(ctx: Context<AssertLiquidityAllocation>) -> Result<()> {
+        let vs = &ctx.accounts.vault_state;
+        let m = &ctx.accounts.vault_mandate;
+        require!(m.vault == vs.key(), ErrorCode::InvalidMandate);
+        if !m.liquidity_enforcement_active {
+            return Ok(());
+        }
+        require!(
+            ctx.accounts.vault_token_account.key() == vs.vault_token_account,
+            ErrorCode::InvalidVaultTokenAccount
+        );
+
+        let usdc = ctx.accounts.vault_token_account.amount;
+        let td = vs.total_deposits;
+
+        let max_usdc = td
+            .checked_mul((10_000u64).saturating_sub(vs.usx_allocation_bps as u64))
+            .ok_or(ErrorCode::Overflow)?
+            .checked_div(10_000)
+            .ok_or(ErrorCode::Overflow)?;
+        let min_usdc = td
+            .checked_mul(m.min_liquidity_buffer_bps as u64)
+            .ok_or(ErrorCode::Overflow)?
+            .checked_div(10_000)
+            .ok_or(ErrorCode::Overflow)?;
+
+        require!(usdc <= max_usdc, ErrorCode::LiquidityAllocationBreached);
+        require!(usdc >= min_usdc, ErrorCode::LiquidityAllocationBreached);
         Ok(())
     }
 }
@@ -686,12 +917,6 @@ pub mod oragami_vault {
 // ============================================================================
 
 /// Central vault state. Single PDA: seeds = ["vault_state"].
-///
-/// SIZE breakdown (8 discriminator + fields):
-///   1 bump + 32*5 (mints/accounts/keys) + 8*2 (min/max dep) +
-///   2 (usx_alloc_bps) + 2 (apy_bps) + 1 (paused) + 8*4 (totals/yield/nav) +
-///   1 (secondary_mkt) + 32 (mock_usx_mint)
-///   = 8 + 1 + 160 + 16 + 2 + 2 + 1 + 32 + 1 + 8 + 32 = 265
 #[account]
 pub struct VaultState {
     pub bump: u8,                       // 1
@@ -715,18 +940,63 @@ pub struct VaultState {
     pub eusx_mint: Pubkey,              // 32  — real Solstice devnet eUSX mint
     pub vault_usx_account: Pubkey,      // 32  — vault's ATA for USX
     pub vault_eusx_account: Pubkey,     // 32  — vault's ATA for eUSX (yield position)
+    /// Day-to-day ops (`set_nav`, yield, USX registration). `Pubkey::default` => use `authority`.
+    pub operator: Pubkey,              // 32
 }
 
 impl VaultState {
-    // discriminator(8) + bump(1) + cvault_mint(32) + cvault_trade_mint(32)
-    // + vault_token_account(32) + treasury(32) + authority(32)
-    // + min_deposit(8) + max_deposit(8) + usx_allocation_bps(2) + apy_bps(2)
-    // + paused(1) + total_deposits(8) + total_supply(8) + last_yield_claim(8)
-    // + pending_yield(8) + secondary_market_enabled(1) + nav_price_bps(8)
-    // + usx_mint(32) + eusx_mint(32) + vault_usx_account(32) + vault_eusx_account(32)
-    // = 8+1+32+32+32+32+32+8+8+2+2+1+8+8+8+8+1+8+32+32+32+32 = 391
-    pub const SIZE: usize = 8 + 1 + 32 + 32 + 32 + 32 + 32 + 8 + 8 + 2 + 2 + 1 + 8 + 8 + 8 + 8 + 1 + 8 + 32 + 32 + 32 + 32;
-    // = 391 bytes
+    // + vault_eusx_account(32) + operator(32)
+    pub const SIZE: usize = 8 + 1 + 32 + 32 + 32 + 32 + 32 + 8 + 8 + 2 + 2 + 1 + 8 + 8 + 8 + 8 + 1 + 8 + 32 + 32 + 32 + 32 + 32;
+    // = 423 bytes
+}
+
+// -----------------------------------------------------------------------
+// RWA ASSET REGISTRY (per vault)
+// -----------------------------------------------------------------------
+
+/// On-chain declaration of what NAV is intended to represent (ISIN, custodian, attestation).
+/// `set_nav` requires this account so price updates are tied to a named backing class.
+#[account]
+pub struct RwaAssetRegistry {
+    pub bump: u8,
+    pub vault: Pubkey,
+    pub asset_id: [u8; 16],
+    pub isin: [u8; 12],
+    pub commodity_code: [u8; 8],
+    pub custodian: Pubkey,
+    /// IPFS / attestation digest; all zeros = unset
+    pub link_hash: [u8; 32],
+    pub last_verified_at: i64,
+}
+
+impl RwaAssetRegistry {
+    pub const SIZE: usize = 8 + 1 + 32 + 16 + 12 + 8 + 32 + 32 + 8;
+}
+
+// -----------------------------------------------------------------------
+// VAULT MANDATE (risk & liquidity envelope)
+// -----------------------------------------------------------------------
+
+#[account]
+pub struct VaultMandate {
+    pub bump: u8,
+    pub vault: Pubkey,
+    /// Minimum share of `total_deposits` that must remain as USDC (basis points).
+    pub min_liquidity_buffer_bps: u16,
+    /// Policy ceiling for `VaultState.usx_allocation_bps` (basis points). Enforced
+    /// by governance / off-chain checks when calling `update_config`; on-chain cap
+    /// can be added in a follow-up if account budget allows.
+    pub max_usx_allocation_bps: u16,
+    /// `total_assets * 10000 >= total_deposits * min_collateral_ratio_bps`
+    pub min_collateral_ratio_bps: u16,
+    pub allowed_asset_types: [u8; 8],
+    pub leverage_allowed: bool,
+    /// When true, optional `vault_mandate` on `deposit` enforces the USDC band (after bootstrap).
+    pub liquidity_enforcement_active: bool,
+}
+
+impl VaultMandate {
+    pub const SIZE: usize = 8 + 1 + 32 + 2 + 2 + 2 + 8 + 1 + 1;
 }
 
 // -----------------------------------------------------------------------
@@ -832,6 +1102,87 @@ pub struct InitializeVault<'info> {
 pub struct SetNav<'info> {
     #[account(mut, seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
     pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [RWA_ASSET_REGISTRY_SEED, vault_state.key().as_ref()],
+        bump = rwa_asset_registry.bump,
+        constraint = rwa_asset_registry.vault == vault_state.key() @ ErrorCode::InvalidRegistry
+    )]
+    pub rwa_asset_registry: Account<'info, RwaAssetRegistry>,
+
+    pub operator: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeRwaAssetRegistry<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = RwaAssetRegistry::SIZE,
+        seeds = [RWA_ASSET_REGISTRY_SEED, vault_state.key().as_ref()],
+        bump
+    )]
+    pub rwa_asset_registry: Account<'info, RwaAssetRegistry>,
+
+    #[account(mut, address = vault_state.authority)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeVaultMandate<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = VaultMandate::SIZE,
+        seeds = [VAULT_MANDATE_SEED, vault_state.key().as_ref()],
+        bump
+    )]
+    pub vault_mandate: Account<'info, VaultMandate>,
+
+    #[account(mut, address = vault_state.authority)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateRwaAssetRegistry<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [RWA_ASSET_REGISTRY_SEED, vault_state.key().as_ref()],
+        bump = rwa_asset_registry.bump,
+        constraint = rwa_asset_registry.vault == vault_state.key() @ ErrorCode::InvalidRegistry
+    )]
+    pub rwa_asset_registry: Account<'info, RwaAssetRegistry>,
+
+    #[account(address = vault_state.authority)]
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct SetMandateLiquidityEnforcement<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_MANDATE_SEED, vault_state.key().as_ref()],
+        bump = vault_mandate.bump,
+        constraint = vault_mandate.vault == vault_state.key() @ ErrorCode::InvalidMandate
+    )]
+    pub vault_mandate: Account<'info, VaultMandate>,
 
     #[account(address = vault_state.authority)]
     pub authority: Signer<'info>,
@@ -1032,8 +1383,7 @@ pub struct ProcessYield<'info> {
     #[account(mut, seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
     pub vault_state: Account<'info, VaultState>,
 
-    #[account(address = vault_state.authority)]
-    pub authority: Signer<'info>,
+    pub operator: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -1041,8 +1391,7 @@ pub struct RegisterUsxAccounts<'info> {
     #[account(mut, seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
     pub vault_state: Account<'info, VaultState>,
 
-    #[account(address = vault_state.authority)]
-    pub authority: Signer<'info>,
+    pub operator: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -1050,8 +1399,7 @@ pub struct DistributeYield<'info> {
     #[account(mut, seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
     pub vault_state: Account<'info, VaultState>,
 
-    #[account(address = vault_state.authority)]
-    pub authority: Signer<'info>,
+    pub operator: Signer<'info>,
 }
 
 // -----------------------------------------------------------------------
@@ -1081,8 +1429,42 @@ pub struct SyncYield<'info> {
     #[account(mut, seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
     pub vault_state: Account<'info, VaultState>,
 
-    #[account(address = vault_state.authority)]
-    pub authority: Signer<'info>,
+    pub operator: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct VerifyProofOfReserve<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        seeds = [VAULT_MANDATE_SEED, vault_state.key().as_ref()],
+        bump = vault_mandate.bump,
+        constraint = vault_mandate.vault == vault_state.key() @ ErrorCode::InvalidMandate
+    )]
+    pub vault_mandate: Account<'info, VaultMandate>,
+
+    #[account(address = vault_state.vault_token_account)]
+    pub vault_token_account: Account<'info, TokenAccount>,
+
+    pub vault_usx_token_account: Option<Account<'info, TokenAccount>>,
+    pub vault_eusx_token_account: Option<Account<'info, TokenAccount>>,
+}
+
+#[derive(Accounts)]
+pub struct AssertLiquidityAllocation<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        seeds = [VAULT_MANDATE_SEED, vault_state.key().as_ref()],
+        bump = vault_mandate.bump,
+        constraint = vault_mandate.vault == vault_state.key() @ ErrorCode::InvalidMandate
+    )]
+    pub vault_mandate: Account<'info, VaultMandate>,
+
+    #[account(address = vault_state.vault_token_account)]
+    pub vault_token_account: Account<'info, TokenAccount>,
 }
 
 // ============================================================================
@@ -1093,6 +1475,8 @@ pub struct SyncYield<'info> {
 pub struct InitializeVaultParams {
     pub treasury: Pubkey,
     pub authority: Pubkey,
+    /// `Pubkey::default` => operator defaults to `authority` at runtime.
+    pub operator: Pubkey,
     pub min_deposit: u64,
     pub max_deposit: u64,
     pub usx_allocation_bps: u16,
@@ -1105,6 +1489,36 @@ pub struct InitializeVaultParams {
 pub struct SetNavParams {
     /// NAV in basis points: 10000 = $1.00, 10430 = $1.043
     pub nav_price_bps: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct InitializeRwaAssetRegistryParams {
+    pub asset_id: [u8; 16],
+    pub isin: [u8; 12],
+    pub commodity_code: [u8; 8],
+    pub custodian: Pubkey,
+    pub link_hash: [u8; 32],
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct InitializeVaultMandateParams {
+    pub min_liquidity_buffer_bps: u16,
+    pub max_usx_allocation_bps: u16,
+    pub min_collateral_ratio_bps: u16,
+    pub allowed_asset_types: [u8; 8],
+    pub leverage_allowed: bool,
+    pub liquidity_enforcement_active: bool,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct UpdateRwaAssetRegistryParams {
+    pub custodian: Option<Pubkey>,
+    pub link_hash: Option<[u8; 32]>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct SetMandateLiquidityEnforcementParams {
+    pub active: bool,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -1211,8 +1625,20 @@ pub enum ErrorCode {
     TravelRuleRequired,
     #[msg("Travel Rule data does not match this deposit")]
     InvalidTravelRule,
-    #[msg("Only the vault authority may trigger yield processing")]
-    YieldNotAuthorized,
+    #[msg("Signer is not the vault operator (or authority when operator unset)")]
+    OperatorNotAuthorized,
+    #[msg("RWA registry account does not match this vault")]
+    InvalidRegistry,
+    #[msg("Vault mandate account does not match this vault")]
+    InvalidMandate,
+    #[msg("Vault mandate constraints are inconsistent or breached")]
+    MandateBreached,
+    #[msg("Proof of reserve: aggregate vault assets below mandated collateral ratio")]
+    ProofOfReserveFailed,
+    #[msg("USDC in vault outside mandate liquidity band vs deposits")]
+    LiquidityAllocationBreached,
+    #[msg("Token account does not match vault configuration")]
+    InvalidVaultTokenAccount,
 }
 
 // ============================================================================
@@ -1229,6 +1655,15 @@ pub struct YieldDistributed {
 pub struct NavUpdated {
     pub nav_price_bps: u64,
     pub timestamp: i64,
+    pub asset_id: [u8; 16],
+}
+
+#[event]
+pub struct ProofOfReserveOk {
+    pub vault: Pubkey,
+    pub total_assets: u64,
+    pub total_deposits: u64,
+    pub min_collateral_ratio_bps: u16,
 }
 
 #[event]

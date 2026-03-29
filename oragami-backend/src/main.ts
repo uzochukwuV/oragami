@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -10,7 +10,13 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.setGlobalPrefix('api', { exclude: ['/'] });
+  app.setGlobalPrefix('api', {
+    exclude: [
+      { path: '/', method: RequestMethod.ALL },
+      { path: 'health', method: RequestMethod.GET },
+      { path: 'health/cranks', method: RequestMethod.GET },
+    ],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

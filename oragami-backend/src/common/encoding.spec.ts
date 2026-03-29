@@ -25,9 +25,7 @@ describe('encoding', () => {
 
   describe('jurisdictionToBytes', () => {
     it('uppercases and fits in 4 bytes', () => {
-      expect(jurisdictionToBytes('ch')).toEqual([
-        67, 72, 0, 0,
-      ]);
+      expect(jurisdictionToBytes('ch')).toEqual([67, 72, 0, 0]);
     });
   });
 

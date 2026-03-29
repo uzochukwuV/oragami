@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Connection,
@@ -17,6 +17,7 @@ const TRAVEL_RULE_SEED = Buffer.from('travel_rule');
 
 @Injectable()
 export class AnchorService implements OnModuleInit {
+  private readonly logger = new Logger(AnchorService.name);
   private connection: Connection;
   private program: Program<OragamiVault>;
   private authority: Keypair;
@@ -44,7 +45,13 @@ export class AnchorService implements OnModuleInit {
       } else {
         throw new Error('Keypair must be JSON array');
       }
-    } catch {
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message === 'Keypair must be JSON array'
+      ) {
+        throw err;
+      }
       throw new Error('Failed to parse VAULT_AUTHORITY_KEYPAIR');
     }
 
@@ -61,13 +68,10 @@ export class AnchorService implements OnModuleInit {
       opts,
     );
 
-    this.program = new Program(
-      idl as any,
-      this.provider,
-    ) as Program<OragamiVault>;
+    this.program = new Program(idl as any, this.provider);
 
-    console.log(
-      `AnchorService initialized: program=${programId.toBase58()}, authority=${this.authority.publicKey.toBase58()}`,
+    this.logger.log(
+      `Initialized: program=${programId.toBase58()}, authority=${this.authority.publicKey.toBase58()}`,
     );
   }
 
@@ -137,10 +141,7 @@ export class AnchorService implements OnModuleInit {
     );
   }
 
-  async readTravelRule(
-    payer: PublicKey,
-    nonceHash: Uint8Array,
-  ): Promise<any> {
+  async readTravelRule(payer: PublicKey, nonceHash: Uint8Array): Promise<any> {
     const [travelRulePda] = this.deriveTravelRulePda(payer, nonceHash);
     return await (this.program.account as any).travelRuleData.fetch(
       travelRulePda,

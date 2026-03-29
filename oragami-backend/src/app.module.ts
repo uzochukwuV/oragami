@@ -10,6 +10,7 @@ import { CredentialsModule } from './credentials/credentials.module';
 import { TravelRuleModule } from './travel-rule/travel-rule.module';
 import { DepositsModule } from './deposits/deposits.module';
 import { VaultModule } from './vault/vault.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { VaultModule } from './vault/vault.module';
     TravelRuleModule,
     DepositsModule,
     VaultModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

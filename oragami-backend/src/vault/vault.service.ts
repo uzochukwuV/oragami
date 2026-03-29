@@ -46,10 +46,12 @@ export class VaultService implements OnModuleInit {
     const vaultEusxPk = this.config.get<string>('VAULT_EUSX_TOKEN_ACCOUNT');
 
     return {
-      totalDeposits: vs.totalDeposits?.toString?.() ?? String(vs.totalDeposits ?? 0),
+      totalDeposits:
+        vs.totalDeposits?.toString?.() ?? String(vs.totalDeposits ?? 0),
       totalSupply: vs.totalSupply?.toString?.() ?? String(vs.totalSupply ?? 0),
       navPriceBps: navBps,
-      pendingYield: vs.pendingYield?.toString?.() ?? String(vs.pendingYield ?? 0),
+      pendingYield:
+        vs.pendingYield?.toString?.() ?? String(vs.pendingYield ?? 0),
       apyBps: Number(vs.apyBps ?? 0),
       usxAllocationBps: Number(vs.usxAllocationBps ?? 0),
       paused: !!vs.paused,
@@ -58,6 +60,7 @@ export class VaultService implements OnModuleInit {
       sixStatus: {
         connected: sixStatus.connected,
         lastSuccessAt: sixStatus.lastSuccessAt?.toISOString() ?? null,
+        mtlsConfigured: sixStatus.mtlsConfigured,
       },
       vaultUsxBalance: await this.tokenBalance(vaultUsxPk),
       vaultEusxBalance: await this.tokenBalance(vaultEusxPk),
@@ -81,23 +84,28 @@ export class VaultService implements OnModuleInit {
   }
 
   async stats() {
-    const [totalInstitutions, activeCredentials, yieldSum, depositSum, snapshots] =
-      await Promise.all([
-        this.prisma.institution.count(),
-        this.prisma.institution.count({
-          where: { credentialStatus: 'active' },
-        }),
-        this.prisma.yieldEvent.aggregate({ _sum: { yieldAccrued: true } }),
-        this.prisma.deposit.aggregate({ _sum: { usdcAmount: true } }),
-        this.prisma.navSnapshot.findMany({
-          where: {
-            timestamp: {
-              gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
-            },
+    const [
+      totalInstitutions,
+      activeCredentials,
+      yieldSum,
+      depositSum,
+      snapshots,
+    ] = await Promise.all([
+      this.prisma.institution.count(),
+      this.prisma.institution.count({
+        where: { credentialStatus: 'active' },
+      }),
+      this.prisma.yieldEvent.aggregate({ _sum: { yieldAccrued: true } }),
+      this.prisma.deposit.aggregate({ _sum: { usdcAmount: true } }),
+      this.prisma.navSnapshot.findMany({
+        where: {
+          timestamp: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
           },
-          orderBy: { timestamp: 'asc' },
-        }),
-      ]);
+        },
+        orderBy: { timestamp: 'asc' },
+      }),
+    ]);
 
     const vs = await this.anchor.readVaultState();
     const apyBps = Number(vs.apyBps ?? 0);

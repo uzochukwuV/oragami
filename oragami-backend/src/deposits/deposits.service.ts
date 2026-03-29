@@ -29,8 +29,7 @@ export class DepositsService {
     try {
       const c = await this.anchor.readCredential(walletPk);
       const st = Number(c.status);
-      credentialStatus =
-        st === ONCHAIN_ACTIVE ? 'active' : `onchain_${st}`;
+      credentialStatus = st === ONCHAIN_ACTIVE ? 'active' : `onchain_${st}`;
     } catch {
       const row = await this.prisma.institution.findUnique({
         where: { walletAddress: dto.wallet },
@@ -41,7 +40,9 @@ export class DepositsService {
     const requiresTravelRule = amount >= TRAVEL_RULE_THRESHOLD;
 
     const vault = await this.anchor.readVaultState();
-    const navBps = BigInt(vault.navPriceBps?.toString?.() ?? vault.navPriceBps ?? 0);
+    const navBps = BigInt(
+      vault.navPriceBps?.toString?.() ?? vault.navPriceBps ?? 0,
+    );
     if (navBps <= 0n) {
       throw new BadRequestException('Vault NAV is zero or unreadable');
     }

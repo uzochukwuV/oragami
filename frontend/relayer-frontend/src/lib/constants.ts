@@ -16,6 +16,8 @@ export const TRANSFER_HOOK_PROGRAM_ID = new PublicKey(
 export const VAULT_STATE_SEED = 'vault_state';
 export const CVAULT_MINT_SEED = 'cvault_mint';
 export const VAULT_TOKEN_SEED = 'vault_token_account';
+export const RWA_ASSET_REGISTRY_SEED = 'rwa_asset_registry';
+export const VAULT_MANDATE_SEED = 'vault_mandate';
 
 /// NAV basis points denominator — 10000 = $1.00
 export const NAV_BPS_DENOMINATOR = 10_000;

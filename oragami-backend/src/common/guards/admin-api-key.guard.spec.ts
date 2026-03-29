@@ -26,9 +26,9 @@ describe('AdminApiKeyGuard', () => {
       get: jest.fn().mockReturnValue('secret-key'),
     } as unknown as ConfigService;
     const guard = new AdminApiKeyGuard(config);
-    expect(() =>
-      guard.canActivate(mockContext({})),
-    ).toThrow(UnauthorizedException);
+    expect(() => guard.canActivate(mockContext({}))).toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('throws when key wrong', () => {

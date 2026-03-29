@@ -21,9 +21,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'LeadVault - Autonomous B2B Lead Intelligence',
-  description: 'AI agents research 100 companies while you sleep. Transform web data into qualified leads with live browser streaming and semantic search.',
-  generator: 'v0.app',
+  title: 'Oragami — Institutional RWA Vault on Solana',
+  description: 'Deposit USDC into a Gold + CHF-backed vault. Mint cVAULT at live NAV prices from SIX Exchange. Earn yield via Solstice USX. KYC/AML enforced on-chain.',
+  generator: 'oragami.finance',
 }
 
 export default function RootLayout({

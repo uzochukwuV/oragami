@@ -12,12 +12,14 @@ export class VaultController {
 
   @Get('nav/history')
   navHistory(@Query('limit') limit?: string) {
-    return this.vault.navHistory(limit ? parseInt(limit, 10) : 100);
+    const parsed = limit ? parseInt(limit, 10) : 100;
+    return this.vault.navHistory(Number.isFinite(parsed) ? parsed : 100);
   }
 
   @Get('yield/history')
   yieldHistory(@Query('limit') limit?: string) {
-    return this.vault.yieldHistory(limit ? parseInt(limit, 10) : 100);
+    const parsed = limit ? parseInt(limit, 10) : 100;
+    return this.vault.yieldHistory(Number.isFinite(parsed) ? parsed : 100);
   }
 
   @Get('stats')

@@ -1,6 +1,6 @@
 /**
- * Solstice USX integration — HTTP Instructions API (see repo SOLICTICE.md).
- * There is no public npm SDK; this mirrors the reference implementation at the bottom of SOLICTICE.md.
+ * Solstice USX integration — HTTP Instructions API (see repo SOLSTICE.md).
+ * There is no public npm SDK; this mirrors the reference implementation at the bottom of SOLSTICE.md.
  */
 
 import {
@@ -84,7 +84,7 @@ export class SolsticeService implements OnModuleInit {
   private apiKey = '';
   private apiUrl = 'https://instructions.solstice.finance';
 
-  /** Devnet mint addresses (overridable via env — see SOLICTICE.md) */
+  /** Devnet mint addresses (overridable via env — see SOLSTICE.md) */
   readonly mints = {
     usdc: '8iBux2LRja1PhVZph8Rw4Hi45pgkaufNEiaZma5nTD5g',
     usdt: '5dXXpWyZCCPhBHxmp79Du81t7t9oh7HacUW864ARFyft',
@@ -168,9 +168,7 @@ export class SolsticeService implements OnModuleInit {
     request: SolsticeInstructionRequest,
   ): Promise<SolsticeInstructionResponse> {
     try {
-      this.logger.debug(
-        `[fetchInstructionFromApi] type=${request.type}`,
-      );
+      this.logger.debug(`[fetchInstructionFromApi] type=${request.type}`);
 
       const response = await fetch(`${this.apiUrl}/v1/instructions`, {
         method: 'POST',
@@ -215,8 +213,7 @@ export class SolsticeService implements OnModuleInit {
       if (error instanceof BadRequestException) throw error;
 
       this.logger.error(
-        `Solstice API error (${request.type}):`,
-        error instanceof Error ? error.message : String(error),
+        `Solstice API error (${request.type}): ${error instanceof Error ? error.message : String(error)}`,
       );
       throw new BadRequestException({
         message: `Failed to fetch Solstice instruction: ${request.type}`,
@@ -417,7 +414,12 @@ export class SolsticeService implements OnModuleInit {
     const payer = user;
 
     const atas = this.ataPreflightInstructions();
-    const reqMint = await this.buildMintInstruction(user, amount, 'usdc', payer);
+    const reqMint = await this.buildMintInstruction(
+      user,
+      amount,
+      'usdc',
+      payer,
+    );
     const confMint = await this.buildConfirmMintInstruction(
       user,
       'usdc',
@@ -438,13 +440,19 @@ export class SolsticeService implements OnModuleInit {
     }
     const amount = Number(usxAmount);
     const user = this.userWallet();
-    const lock = await this.buildLockInstruction(user, amount, undefined, undefined, user);
+    const lock = await this.buildLockInstruction(
+      user,
+      amount,
+      undefined,
+      undefined,
+      user,
+    );
     return this.sendInstructions('lockUsxForYield', [lock]);
   }
 
   /**
    * eUSX price in USX. Cached 60s.
-   * Prefer optional on-chain reserve ratio (env); else 1.0 (see SOLICTICE.md — no HTTP yield quote).
+   * Prefer optional on-chain reserve ratio (env); else 1.0 (see SOLSTICE.md — no HTTP yield quote).
    */
   async getEusxNav(): Promise<number> {
     const now = Date.now();
@@ -495,6 +503,9 @@ export class SolsticeService implements OnModuleInit {
     }
 
     const fallback = 1.0;
+    this.logger.warn(
+      'getEusxNav: no reserve account configured and no override set; using fallback NAV=1.0',
+    );
     this.cachedEusxNav = { value: fallback, timestamp: now };
     return fallback;
   }
@@ -528,9 +539,7 @@ export class SolsticeService implements OnModuleInit {
         new PublicKey(this.mints.eusx),
       );
       const totalShares = eusxMintInfo.supply;
-      const approxAssets = BigInt(
-        Math.floor(Number(totalShares) * eusxNav),
-      );
+      const approxAssets = BigInt(Math.floor(Number(totalShares) * eusxNav));
       return {
         eusxPriceInUsx: eusxNav,
         totalAssets: approxAssets,

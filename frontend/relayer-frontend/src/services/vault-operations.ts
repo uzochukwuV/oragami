@@ -19,6 +19,7 @@ import {
   VAULT_STATE_SEED,
   CVAULT_MINT_SEED,
   VAULT_TOKEN_SEED,
+  RWA_ASSET_REGISTRY_SEED,
   SOLANA_RPC_URL,
 } from '@/lib/constants';
 import oragamiVaultIdl from '@/lib/idl/oragami_vault.json';
@@ -107,6 +108,15 @@ export function deriveVaultPDAs(): VaultPDAs {
   );
 
   return { vaultState, cvaultMint, vaultTokenAccount };
+}
+
+/** PDA: ["rwa_asset_registry", vault_state] — must exist before `setNav`. */
+export function deriveRwaAssetRegistryPda(vaultState: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from(RWA_ASSET_REGISTRY_SEED), vaultState.toBuffer()],
+    VAULT_PROGRAM_ID
+  );
+  return pda;
 }
 
 // ============================================================================
@@ -564,7 +574,7 @@ export async function syncVaultYield(
       .syncYield()
       .accounts({
         vaultState,
-        authority: userPublicKey,
+        operator: userPublicKey,
       })
       .rpc();
 
@@ -582,13 +592,13 @@ export async function syncVaultYield(
 }
 
 // ============================================================================
-// Set NAV (authority only — called by backend after SIX price update)
+// Set NAV (operator — called by backend after SIX price update)
 // ============================================================================
 
 /**
  * Update the vault NAV price on-chain.
- * Only callable by the vault authority.
- * navPriceBps: 10000 = $1.00, 10430 = $1.043
+ * Callable by the vault operator (or authority when operator unset).
+ * Requires `initializeRwaAssetRegistry` once. navPriceBps: 10000 = $1.00, 10430 = $1.043
  */
 export async function setVaultNav(
   wallet: any,
@@ -597,6 +607,7 @@ export async function setVaultNav(
   try {
     const program = getVaultProgram(wallet);
     const { vaultState } = deriveVaultPDAs();
+    const rwaAssetRegistry = deriveRwaAssetRegistryPda(vaultState);
 
     const userPublicKey = wallet.publicKey;
     if (!userPublicKey) {
@@ -607,7 +618,8 @@ export async function setVaultNav(
       .setNav({ navPriceBps: new BN(navPriceBps) })
       .accounts({
         vaultState,
-        authority: userPublicKey,
+        rwaAssetRegistry,
+        operator: userPublicKey,
       })
       .rpc();
 

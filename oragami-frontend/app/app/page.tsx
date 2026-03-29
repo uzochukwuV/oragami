@@ -1,326 +1,247 @@
-"use client";
+'use client';
 
-import { useState, useCallback } from "react";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ArrowLeft, Database, Zap, CheckCircle, XCircle } from "lucide-react";
-import { ICPForm } from "@/components/app/icp-form";
-import { AgentStream, AgentProgress } from "@/components/app/agent-stream";
-import { LeadsTable, Lead } from "@/components/app/leads-table";
-import { SearchBar } from "@/components/app/search-bar";
+import { useState, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Shield, ArrowLeft, Settings } from 'lucide-react';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { VaultStatsBar } from '@/features/vault/VaultStatsBar';
+import { VaultPanel } from '@/features/vault/VaultPanel';
+import { RiskScanner } from '@/features/risk-scanner';
+import { WalletButton } from '@/features/wallet/ui/WalletButton';
+import { useVaultState } from '@/features/vault/useVaultState';
+
+// ─── Risk Scanner Overlay ────────────────────────────────────────────────────
+
+function RiskScannerOverlay({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40"
+          />
+          <motion.div
+            initial={{ opacity: 0, x: 50 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 50 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="fixed right-0 top-0 bottom-0 w-full max-w-xl z-50 overflow-y-auto bg-background border-l border-foreground/10"
+          >
+            <div className="p-6 pt-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="font-display text-2xl">Wallet Risk Scanner</h2>
+                <button
+                  onClick={onClose}
+                  className="p-2 rounded-lg hover:bg-foreground/5 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <RiskScanner />
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ─── Main App Page ────────────────────────────────────────────────────────────
 
 export default function AppPage() {
-  const [agents, setAgents] = useState<AgentProgress[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [filteredLeads, setFilteredLeads] = useState<Lead[]>([]);
-  const [isResearching, setIsResearching] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchActive, setSearchActive] = useState(false);
-  const [mongoStatus, setMongoStatus] = useState<{
-    testing: boolean;
-    result: { success: boolean; message?: string; error?: string; suggestion?: string } | null;
-  }>({ testing: false, result: null });
+  const [isRiskScannerOpen, setIsRiskScannerOpen] = useState(false);
+  const { stats, basket, isLoading, refresh } = useVaultState();
 
-  const testMongoConnection = useCallback(async () => {
-    setMongoStatus({ testing: true, result: null });
-    try {
-      const response = await fetch("/api/test-mongo");
-      const data = await response.json();
-      setMongoStatus({ testing: false, result: data });
-    } catch (error) {
-      setMongoStatus({
-        testing: false,
-        result: { success: false, error: error instanceof Error ? error.message : "Failed to test connection" },
-      });
-    }
-  }, []);
-
-  const handleStartResearch = useCallback(async (domains: string[], goal: string) => {
-    setIsResearching(true);
-    setAgents(
-      domains.map((domain) => ({
-        domain,
-        status: "queued",
-        progress: [],
-      }))
-    );
-
-    // Process each domain through TinyFish API
-    for (const domain of domains) {
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.domain === domain
-            ? { ...a, status: "running", progress: ["Starting research..."] }
-            : a
-        )
-      );
-
-      try {
-        const response = await fetch("/api/research", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain, goal }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Research failed: ${response.status} - ${errorText}`);
-        }
-
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-
-        if (reader) {
-          let buffer = "";
-          
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  
-                  if (data.type === "progress") {
-                    setAgents((prev) =>
-                      prev.map((a) =>
-                        a.domain === domain
-                          ? { ...a, progress: [...a.progress, data.message] }
-                          : a
-                      )
-                    );
-                  } else if (data.type === "stream_url") {
-                    setAgents((prev) =>
-                      prev.map((a) =>
-                        a.domain === domain
-                          ? { ...a, streamUrl: data.url }
-                          : a
-                      )
-                    );
-                  } else if (data.type === "complete") {
-                    setAgents((prev) =>
-                      prev.map((a) =>
-                        a.domain === domain
-                          ? { ...a, status: "complete", progress: [...a.progress, "Research complete!"] }
-                          : a
-                      )
-                    );
-                    
-                    if (data.lead) {
-                      setLeads((prev) => [...prev, data.lead]);
-                    }
-                  } else if (data.type === "error") {
-                    setAgents((prev) =>
-                      prev.map((a) =>
-                        a.domain === domain
-                          ? { ...a, status: "error", error: data.message }
-                          : a
-                      )
-                    );
-                  }
-                } catch {
-                  // Skip invalid JSON
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Failed to connect to research API";
-        setAgents((prev) =>
-          prev.map((a) =>
-            a.domain === domain
-              ? { ...a, status: "error", error: errorMessage }
-              : a
-          )
-        );
-      }
-    }
-
-    setIsResearching(false);
-  }, []);
-
-  const handleSearch = useCallback(async (query: string) => {
-    setIsSearching(true);
-    setSearchActive(true);
-
-    try {
-      const response = await fetch("/api/leads/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setFilteredLeads(data.leads || []);
-      }
-    } catch (error) {
-      console.error("Search failed:", error);
-    }
-
-    setIsSearching(false);
-  }, []);
-
-  const handleClearSearch = useCallback(() => {
-    setSearchActive(false);
-    setFilteredLeads([]);
-  }, []);
-
-  const handleExport = useCallback(() => {
-    const dataToExport = searchActive ? filteredLeads : leads;
-    const csv = [
-      ["Company", "Domain", "Industry", "Contacts", "Funding", "Technologies", "Researched At"].join(","),
-      ...dataToExport.map((lead) =>
-        [
-          `"${lead.companyName}"`,
-          lead.domain,
-          `"${lead.industry}"`,
-          lead.contacts.length,
-          `"${lead.funding || "N/A"}"`,
-          `"${lead.technologies.join("; ")}"`,
-          lead.researchedAt,
-        ].join(",")
-      ),
-    ].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `leadvault-export-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [leads, filteredLeads, searchActive]);
-
-  const displayLeads = searchActive ? filteredLeads : leads;
+  const handleVaultUpdate = useCallback(() => {
+    refresh();
+  }, [refresh]);
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-foreground/10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" asChild className="gap-2">
-              <Link href="/">
-                <ArrowLeft className="w-4 h-4" />
-                Back
+      {/* App Header — matches landing nav style */}
+      <header className="sticky top-0 z-50 w-full bg-background/95 backdrop-blur-sm border-b border-foreground/10">
+        <div className="max-w-[1400px] mx-auto px-6 lg:px-12">
+          <div className="flex items-center justify-between h-14">
+            {/* Left — back to landing + brand */}
+            <div className="flex items-center gap-4">
+              <Link
+                href="/"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors group"
+              >
+                <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+                <span className="hidden sm:inline">Back</span>
               </Link>
-            </Button>
-            <div className="h-6 w-px bg-foreground/10" />
-            <div className="flex items-center gap-2">
-              <span className="font-display text-xl">LeadVault</span>
-              <span className="text-xs font-mono text-muted-foreground">AI</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Zap className="w-3 h-3" />
-              TinyFish API
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={testMongoConnection}
-              disabled={mongoStatus.testing}
-              className="gap-1 h-7 text-xs"
-            >
-              <Database className="w-3 h-3" />
-              {mongoStatus.testing ? "Testing..." : "Test MongoDB"}
-            </Button>
-            {mongoStatus.result && (
-              <span className={mongoStatus.result.success ? "text-green-500" : "text-red-500"}>
-                {mongoStatus.result.success ? "Connected!" : "Failed"}
+              <div className="h-4 w-px bg-foreground/10" />
+              <div className="flex items-center gap-2">
+                <span className="font-display text-lg">Oragami</span>
+                <span className="text-xs text-muted-foreground font-mono">Vault</span>
+              </div>
+              {/* Devnet badge */}
+              <span className="px-2 py-0.5 rounded-full text-xs font-mono bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
+                DEVNET
               </span>
-            )}
+            </div>
+
+            {/* Right — risk scanner + wallet */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsRiskScannerOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors border border-foreground/10"
+              >
+                <Shield className="w-4 h-4" />
+                <span className="hidden sm:inline">Risk Scanner</span>
+              </button>
+              <WalletButton />
+            </div>
           </div>
         </div>
       </header>
 
-      {/* MongoDB Test Results */}
-      {mongoStatus.result && (
-        <div className="max-w-7xl mx-auto px-6 pt-4">
-          <Alert variant={mongoStatus.result.success ? "default" : "destructive"}>
-            {mongoStatus.result.success ? (
-              <CheckCircle className="h-4 w-4" />
-            ) : (
-              <XCircle className="h-4 w-4" />
-            )}
-            <AlertTitle>
-              {mongoStatus.result.success ? "MongoDB Connected" : "MongoDB Connection Failed"}
-            </AlertTitle>
-            <AlertDescription className="mt-2">
-              {mongoStatus.result.success ? (
-                <span>{mongoStatus.result.message}</span>
-              ) : (
-                <div className="space-y-1">
-                  <p className="font-mono text-xs break-all">{mongoStatus.result.error}</p>
-                  {mongoStatus.result.suggestion && (
-                    <p className="text-sm mt-2">{mongoStatus.result.suggestion}</p>
-                  )}
-                </div>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2 h-6 text-xs"
-                onClick={() => setMongoStatus({ testing: false, result: null })}
-              >
-                Dismiss
-              </Button>
-            </AlertDescription>
-          </Alert>
-        </div>
-      )}
+      {/* Main content */}
+      <main className="max-w-[1400px] mx-auto px-6 lg:px-12 py-8 space-y-6">
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid lg:grid-cols-12 gap-8">
-          {/* Left Column - ICP Form */}
-          <div className="lg:col-span-4">
-            <div className="sticky top-8">
-              <div className="mb-6">
-                <h1 className="text-2xl font-display mb-2">Lead Research</h1>
-                <p className="text-sm text-muted-foreground">
-                  Enter company domains to research. Agents will extract contacts,
-                  funding, and more.
-                </p>
+        {/* Page title */}
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+        >
+          <h1 className="font-display text-3xl lg:text-4xl tracking-tight">
+            Vault Dashboard
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Deposit USDC · Mint cVAULT at live NAV · Earn yield via Solstice USX
+          </p>
+        </motion.div>
+
+        {/* Live vault stats — NAV, TVL, basket */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.1 }}
+        >
+          <VaultStatsBar
+            stats={stats}
+            basket={basket}
+            isLoading={isLoading}
+            onRefresh={refresh}
+          />
+        </motion.div>
+
+        {/* Vault operations + info */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
+          className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6"
+        >
+          {/* Left — Vault Panel (Deposit / Redeem / Convert) */}
+          <VaultPanel stats={stats} onVaultUpdate={handleVaultUpdate} />
+
+          {/* Right — Vault info cards using oragami-frontend design */}
+          <div className="space-y-4">
+            {/* Basket composition */}
+            <div className="border border-foreground/10 p-6">
+              <h3 className="font-display text-xl mb-4">RWA Basket Composition</h3>
+              <div className="space-y-3">
+                {basket.map((asset) => (
+                  <div key={asset.symbol} className="flex items-center justify-between py-3 border-b border-foreground/5 last:border-0">
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-xs text-muted-foreground w-8">{asset.weight}%</span>
+                      <div>
+                        <p className="text-sm font-medium">{asset.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{asset.symbol}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      {asset.price != null ? (
+                        <p className="text-sm font-mono">
+                          {asset.symbol === 'XAU'
+                            ? `$${asset.price.toLocaleString('en-US', { maximumFractionDigits: 0 })}/oz`
+                            : `$${asset.price.toFixed(4)}`}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Loading...</p>
+                      )}
+                      <p className="text-xs text-muted-foreground">via SIX Exchange</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <ICPForm onSubmit={handleStartResearch} isLoading={isResearching} />
+            </div>
+
+            {/* Compliance info */}
+            <div className="border border-foreground/10 p-6">
+              <h3 className="font-display text-xl mb-4">Compliance Requirements</h3>
+              <div className="space-y-3 text-sm">
+                {[
+                  { label: 'KYC Credential', value: 'Required on-chain before deposit', status: 'required' },
+                  { label: 'AML Coverage', value: 'Minimum score 80/100', status: 'required' },
+                  { label: 'Travel Rule', value: 'Required for deposits ≥ 1,000 USDC', status: 'conditional' },
+                  { label: 'Credential Expiry', value: 'Auto-checked on every deposit', status: 'auto' },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-start justify-between gap-4 py-2 border-b border-foreground/5 last:border-0">
+                    <span className="text-muted-foreground">{item.label}</span>
+                    <div className="text-right">
+                      <span className="text-xs">{item.value}</span>
+                      <span className={`block text-xs font-mono mt-0.5 ${
+                        item.status === 'required' ? 'text-yellow-500' :
+                        item.status === 'conditional' ? 'text-blue-400' : 'text-green-500'
+                      }`}>
+                        {item.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Yield info */}
+            <div className="border border-foreground/10 p-6">
+              <h3 className="font-display text-xl mb-4">Yield Strategy</h3>
+              <div className="space-y-3 text-sm">
+                {[
+                  { label: 'Target APY', value: `${stats.apy.toFixed(1)}%` },
+                  { label: 'USX Allocation', value: stats.usxAllocationPct },
+                  { label: 'Yield Token', value: 'Solstice eUSX' },
+                  { label: 'Distribution', value: 'Daily on-chain accrual' },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center justify-between py-2 border-b border-foreground/5 last:border-0">
+                    <span className="text-muted-foreground">{item.label}</span>
+                    <span className="font-mono text-xs">{item.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
+        </motion.div>
 
-          {/* Right Column - Results */}
-          <div className="lg:col-span-8 space-y-8">
-            {/* Agent Progress */}
-            {agents.length > 0 && (
-              <section>
-                <AgentStream agents={agents} />
-              </section>
-            )}
-
-            {/* Search + Leads */}
-            <section className="space-y-6">
-              {leads.length > 0 && (
-                <SearchBar
-                  onSearch={handleSearch}
-                  onClear={handleClearSearch}
-                  isSearching={isSearching}
-                  hasResults={searchActive}
-                />
-              )}
-              <LeadsTable leads={displayLeads} onExport={leads.length > 0 ? handleExport : undefined} />
-            </section>
-          </div>
+        {/* Solscan link */}
+        <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground font-mono">
+          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <span>Devnet</span>
+          <span className="text-foreground/20">·</span>
+          <a
+            href="https://explorer.solana.com/address/ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP?cluster=devnet"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground transition-colors"
+          >
+            ihUcHpWk... ↗
+          </a>
         </div>
       </main>
+
+      {/* Risk Scanner Overlay */}
+      <RiskScannerOverlay
+        isOpen={isRiskScannerOpen}
+        onClose={() => setIsRiskScannerOpen(false)}
+      />
     </div>
   );
 }

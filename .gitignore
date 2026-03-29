@@ -28,7 +28,7 @@ Thumbs.db
 *.tar.bz2
 *.tar.zst
 
-six-data-access/
-six-data-access/*
+six-data-cert/
+six-data-cert/*
 
-six-data-access/*/**
+six-data-cert/*/**
