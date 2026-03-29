@@ -390,4 +390,178 @@ export class NavCrankService {
       lastOnChainUpdateMs: this.lastOnChainUpdateMs,
     };
   }
+
+  // ─── Minimal yield tick (ISSUE #7 stub) ──────────────────────────────────────
+  /**
+   * Calls process_yield on-chain so vault_state.pending_yield accumulates.
+   * Records a YieldEvent row in the DB so /api/vault/yield/history has data.
+   *
+   * What this does NOT do (full ISSUE #7 work):
+   *   - Does not call solstice.mintUsx()       (USDC → USX)
+   *   - Does not call solstice.lockUsxForYield() (USX → eUSX)
+   *   - Does not call distribute_yield on-chain  (reset pending_yield)
+   * Those three steps are the full yield-crank.service.ts described below.
+   */
+  private async tickYield(
+    navBeforeBps: number,
+    navAfterBps: number,
+    usxAllocationBps: number,
+    eusxNav: number,
+  ): Promise<void> {
+    try {
+      const program = this.anchor.getProgram();
+      const [vaultStatePda] = this.anchor.deriveVaultStatePda();
+      const authority = this.anchor.getAuthority();
+
+      // Call process_yield — no-ops on-chain if < 1 day elapsed, which is fine.
+      // The contract accumulates yield into pending_yield when a full day has passed.
+      await (program.methods as any)
+        .processYield()
+        .accounts({
+          vaultState: vaultStatePda,
+          authority: authority.publicKey,
+        })
+        .signers([authority])
+        .rpc();
+
+      // Read updated state to capture what was actually accrued
+      const vs = await this.anchor.readVaultState();
+      const totalDeposits = BigInt(
+        vs.totalDeposits?.toString?.() ?? vs.totalDeposits ?? 0,
+      );
+      const pendingYield = BigInt(
+        vs.pendingYield?.toString?.() ?? vs.pendingYield ?? 0,
+      );
+      const apyBps = Number(vs.apyBps ?? 0);
+      const lastClaim = Number(
+        vs.lastYieldClaim?.toString?.() ?? vs.lastYieldClaim ?? 0,
+      );
+      const daysElapsed = Math.max(
+        0,
+        Math.floor((Date.now() / 1000 - lastClaim) / 86400),
+      );
+
+      await this.recordYieldEvent(
+        totalDeposits,
+        usxAllocationBps,
+        apyBps,
+        daysElapsed,
+        pendingYield,
+        navBeforeBps,
+        navAfterBps,
+        eusxNav,
+      );
+
+      this.logger.log(
+        `Yield tick: pending_yield=${pendingYield} days_elapsed=${daysElapsed}`,
+      );
+    } catch (err) {
+      // Non-fatal — yield tick failure must not abort the NAV update
+      this.logger.warn(
+        `Yield tick failed (non-fatal): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  private async recordYieldEvent(
+    totalDeposits: bigint,
+    usxAllocationBps: number,
+    apyBps: number,
+    daysElapsed: number,
+    yieldAccrued: bigint,
+    navBeforeBps: number,
+    navAfterBps: number,
+    eusxNav: number,
+  ): Promise<void> {
+    try {
+      await this.prisma.yieldEvent.create({
+        data: {
+          totalDeposits,
+          usxAllocationBps,
+          apyBps,
+          daysElapsed,
+          yieldAccrued,
+          navBeforeBps: BigInt(navBeforeBps),
+          navAfterBps: BigInt(navAfterBps),
+          eusxPrice: eusxNav,
+          timestamp: new Date(),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to record yield event: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
 }
+
+// =============================================================================
+// ISSUE #7 — Full Yield Accrual Crank (NOT YET IMPLEMENTED)
+// =============================================================================
+//
+// When to implement: after frontend integration is complete and the vault has
+// a real USDC balance on devnet.
+//
+// What to build: src/crank/yield-crank.service.ts
+//
+// Schedule: @Cron('*/10 * * * *') for demo, @Cron('5 0 * * *') for production.
+//
+// Full flow:
+//
+//   1. anchorService.readVaultState()
+//      → get total_deposits, usx_allocation_bps, apy_bps,
+//        last_yield_claim, pending_yield
+//
+//   2. Compute days_elapsed = floor((now - last_yield_claim) / 86400)
+//      If days_elapsed === 0 → skip (contract will no-op anyway)
+//
+//   3. Call process_yield on-chain:
+//      program.methods.processYield()
+//        .accounts({ vaultState, authority })
+//        .rpc()
+//      → pending_yield is now non-zero
+//
+//   4. Read updated vault_state.pending_yield
+//
+//   5. If pending_yield > DISTRIBUTE_THRESHOLD (env var, default 1_000_000):
+//
+//      a. solsticeService.mintUsx(pendingYield)
+//         → USDC in vault_token_account → USX in vault_usx_account
+//         → returns txSignature
+//
+//      b. solsticeService.lockUsxForYield(usxAmount)
+//         → USX in vault_usx_account → eUSX in vault_eusx_account
+//         → returns txSignature
+//
+//      c. program.methods.distributeYield()
+//           .accounts({ vaultState, authority })
+//           .rpc()
+//         → resets pending_yield = 0 on-chain
+//         → emits YieldDistributed event
+//
+//   6. prisma.yieldEvent.create({ ..., txSignature from step 5c })
+//
+//   7. crankStateService.recordYieldRun(success)
+//
+//   8. Immediately trigger NavCrankService.updateNav()
+//      because eUSX position changed → NAV should reflect new eUSX price
+//
+// Error handling:
+//   - If mintUsx fails: log, do NOT call distributeYield, retry next cycle
+//   - If lockUsxForYield fails: same — pending_yield stays, retry next cycle
+//   - If distributeYield fails after Solstice CPIs succeed: critical — log
+//     with ALERT level, manual intervention may be needed
+//
+// Module wiring:
+//   - Add YieldCrankService to CrankModule providers
+//   - Inject NavCrankService into YieldCrankService (already exported)
+//   - Add recordYieldRun() call to CrankStateService (already has the method)
+//
+// Environment variables needed:
+//   DISTRIBUTE_THRESHOLD=1000000   # 1 USDC in raw units (6 decimals)
+//
+// Test file: src/crank/yield-crank.service.spec.ts
+//   Cover: days_elapsed=0 skips, threshold not met skips,
+//          Solstice failure does not call distributeYield,
+//          success path records YieldEvent and triggers NAV crank.
+// =============================================================================

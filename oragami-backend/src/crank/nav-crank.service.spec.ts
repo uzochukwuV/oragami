@@ -20,6 +20,25 @@ function buildRpcMock(resolvedValue: string | null = 'mock-tx-sig') {
   return { chain, rpc };
 }
 
+/** Vault state returned after process_yield — pending_yield is non-zero */
+const mockVaultStateWithYield = {
+  navPriceBps: 10_000,
+  usxAllocationBps: 7000,
+  totalDeposits: 1_000_000_000n,
+  pendingYield: 137n,
+  apyBps: 500,
+  lastYieldClaim: Math.floor(Date.now() / 1000) - 86400, // 1 day ago
+};
+
+function buildProgramMock(setNavChain: any, processYieldChain: any) {
+  return {
+    methods: {
+      setNav: jest.fn().mockReturnValue(setNavChain),
+      processYield: jest.fn().mockReturnValue(processYieldChain),
+    },
+  };
+}
+
 describe('NavCrankService', () => {
   let service: NavCrankService;
   let mockSix: jest.Mocked<Pick<SixService, 'fetchIntradaySnapshot'>>;
