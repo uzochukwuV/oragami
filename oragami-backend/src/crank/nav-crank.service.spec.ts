@@ -50,7 +50,8 @@ describe('NavCrankService', () => {
   beforeEach(async () => {
     jest.resetAllMocks();
 
-    const { chain } = buildRpcMock('mock-tx-sig');
+    const { chain: setNavChain } = buildRpcMock('mock-tx-sig');
+    const { chain: processYieldChain } = buildRpcMock('mock-yield-sig');
 
     mockSix = {
       fetchIntradaySnapshot: jest
@@ -62,10 +63,10 @@ describe('NavCrankService', () => {
     mockAnchor = {
       readVaultState: jest
         .fn()
-        .mockResolvedValue({ navPriceBps: 10_000, usxAllocationBps: 7000 }),
-      getProgram: jest.fn().mockReturnValue({
-        methods: { setNav: jest.fn().mockReturnValue(chain) },
-      }),
+        .mockResolvedValue(mockVaultStateWithYield),
+      getProgram: jest.fn().mockReturnValue(
+        buildProgramMock(setNavChain, processYieldChain),
+      ),
       deriveVaultStatePda: jest
         .fn()
         .mockReturnValue([{ toBase58: () => 'vaultPda' }, 255]),
@@ -77,6 +78,7 @@ describe('NavCrankService', () => {
     mockPrisma = {
       navSnapshot: { create: jest.fn().mockResolvedValue({}) },
       auditEvent: { create: jest.fn().mockResolvedValue({}) },
+      yieldEvent: { create: jest.fn().mockResolvedValue({}) },
     };
 
     mockSolstice = { getEusxNav: jest.fn().mockResolvedValue(1.002) };
@@ -165,13 +167,61 @@ describe('NavCrankService', () => {
     });
 
     it('still records snapshot even when set_nav on-chain fails', async () => {
-      const { chain } = buildRpcMock(null);
-      mockAnchor.getProgram.mockReturnValue({
-        methods: { setNav: jest.fn().mockReturnValue(chain) },
-      });
+      const { chain: failChain } = buildRpcMock(null);
+      const { chain: yieldChain } = buildRpcMock('mock-yield-sig');
+      mockAnchor.getProgram.mockReturnValue(
+        buildProgramMock(failChain, yieldChain),
+      );
 
       const result = await service.updateNav();
       expect(result.txSignature).toBeNull();
+      expect(mockPrisma.navSnapshot.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('yield tick (minimal ISSUE #7 stub)', () => {
+    it('calls process_yield on-chain after a successful set_nav', async () => {
+      await service.updateNav();
+      const program = mockAnchor.getProgram();
+      expect(program.methods.processYield).toHaveBeenCalledTimes(1);
+    });
+
+    it('records a YieldEvent in the DB after process_yield', async () => {
+      await service.updateNav();
+      expect(mockPrisma.yieldEvent.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.yieldEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            usxAllocationBps: 7000,
+            apyBps: 500,
+            eusxPrice: 1.002,
+          }),
+        }),
+      );
+    });
+
+    it('does not record YieldEvent when set_nav fails (tick never runs)', async () => {
+      const { chain: failChain } = buildRpcMock(null);
+      const { chain: yieldChain } = buildRpcMock('mock-yield-sig');
+      mockAnchor.getProgram.mockReturnValue(
+        buildProgramMock(failChain, yieldChain),
+      );
+
+      await service.updateNav();
+      // set_nav failed — tickYield is inside the try block so it never ran
+      expect(mockPrisma.yieldEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('does not abort NAV update when process_yield fails', async () => {
+      const { chain: setNavChain } = buildRpcMock('mock-tx-sig');
+      const { chain: failYieldChain } = buildRpcMock(null);
+      mockAnchor.getProgram.mockReturnValue(
+        buildProgramMock(setNavChain, failYieldChain),
+      );
+
+      // NAV update should still succeed even though yield tick failed
+      const result = await service.updateNav();
+      expect(result.txSignature).toBe('mock-tx-sig');
       expect(mockPrisma.navSnapshot.create).toHaveBeenCalledTimes(1);
     });
   });
