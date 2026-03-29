@@ -7,11 +7,11 @@ import {
   SOLANA_RPC_URL,
   VAULT_PROGRAM_ID,
   VAULT_STATE_SEED,
-  API_BASE_URL,
   NAV_BPS_DENOMINATOR,
 } from '@/lib/constants';
 import oragamiVaultIdl from '@/lib/idl/oragami_vault.json';
 import { navBpsToPrice } from '@/services/vault-operations';
+import { getNavCurrent } from '@/shared/api';
 
 export interface VaultStats {
   navPriceBps: number;
@@ -105,54 +105,47 @@ export function useVaultState(refreshInterval = 15_000) {
         // Not initialized yet — show empty state
       }
 
-      // 2. Fetch SIX prices from backend (graceful fallback)
+      // 2. Fetch NAV from backend API (NavSnapshot from SIX crank)
+      let navBps: number | null = null;
       let goldPrice: number | null = null;
       let chfUsd: number | null = null;
+      let navTimestamp: Date | null = null;
       try {
-        const [goldRes, chfRes] = await Promise.allSettled([
-          fetch(`${API_BASE_URL}/six/metal/GOLD`),
-          fetch(`${API_BASE_URL}/six/forex/CHF/USD`),
-        ]);
-        if (goldRes.status === 'fulfilled' && goldRes.value.ok) {
-          const g = await goldRes.value.json();
-          if (g.success && g.data?.price_per_oz) goldPrice = g.data.price_per_oz;
-        }
-        if (chfRes.status === 'fulfilled' && chfRes.value.ok) {
-          const c = await chfRes.value.json();
-          if (c.success && c.data?.rate) chfUsd = c.data.rate;
-        }
+        const nav = await getNavCurrent();
+        if (nav.navBps != null) navBps = parseInt(nav.navBps, 10);
+        goldPrice = nav.goldPrice;
+        chfUsd = nav.chfUsd;
+        if (nav.timestamp) navTimestamp = new Date(nav.timestamp);
       } catch {
-        // SIX unavailable — NAV stays on-chain value
+        // Backend unavailable — fall through to on-chain / empty
       }
 
-      // 3. Build stats from on-chain data
-      if (onChain) {
-        const navBps: number = onChain.navPriceBps?.toNumber?.() ?? NAV_BPS_DENOMINATOR;
-        const tvl: number = onChain.totalDeposits?.toNumber?.() ?? 0;
-        const supply: number = onChain.totalSupply?.toNumber?.() ?? 0;
-        const usxBps: number = onChain.usxAllocationBps ?? 7000;
+      // 3. Build stats (API NAV takes priority, on-chain fallback for TVL/supply)
+      const effectiveNav = navBps
+        ?? onChain?.navPriceBps?.toNumber?.()
+        ?? NAV_BPS_DENOMINATOR;
+      const tvl: number = onChain?.totalDeposits?.toNumber?.() ?? 0;
+      const supply: number = onChain?.totalSupply?.toNumber?.() ?? 0;
+      const usxBps: number = onChain?.usxAllocationBps ?? 7000;
 
-        setStats({
-          navPriceBps: navBps,
-          navDisplay: `$${navBpsToPrice(navBps)}`,
-          tvlUsdc: tvl,
-          tvlDisplay: formatUsdc(tvl),
-          totalSupply: supply,
-          supplyDisplay: formatCvault(supply),
-          usxAllocationBps: usxBps,
-          usxAllocationPct: `${(usxBps / 100).toFixed(0)}%`,
-          apy: 5.0,
-          paused: onChain.paused ?? false,
-          initialized: true,
-          goldPrice,
-          chfUsd,
-          lastUpdated: new Date(),
-        });
-      } else {
-        setStats({ ...EMPTY_STATS, goldPrice, chfUsd, lastUpdated: new Date() });
-      }
+      setStats({
+        navPriceBps: effectiveNav,
+        navDisplay: `$${navBpsToPrice(effectiveNav)}`,
+        tvlUsdc: tvl,
+        tvlDisplay: formatUsdc(tvl),
+        totalSupply: supply,
+        supplyDisplay: formatCvault(supply),
+        usxAllocationBps: usxBps,
+        usxAllocationPct: `${(usxBps / 100).toFixed(0)}%`,
+        apy: 5.0,
+        paused: onChain?.paused ?? false,
+        initialized: !!onChain || navBps != null,
+        goldPrice,
+        chfUsd,
+        lastUpdated: navTimestamp ?? new Date(),
+      });
 
-      // 4. Update basket with live SIX prices
+      // 4. Update basket with live prices from NAV snapshot
       setBasket([
         { symbol: 'XAU', name: 'Gold', weight: 50, price: goldPrice, currency: 'USD/oz' },
         { symbol: 'CHF', name: 'CHF/USD', weight: 30, price: chfUsd, currency: 'USD' },

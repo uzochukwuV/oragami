@@ -3,12 +3,16 @@
 import { motion } from 'framer-motion';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 import type { VaultStats, BasketAsset } from './useVaultState';
+import { NavSparkline } from './NavSparkline';
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function StatCard({ label, value, sub, children }: { label: string; value: string; sub?: string; children?: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1 py-4 border-b border-foreground/10 last:border-0 lg:border-b-0 lg:border-r lg:px-8 lg:first:pl-0 lg:last:pr-0 lg:last:border-r-0">
       <span className="font-mono text-xs tracking-widest text-muted-foreground uppercase">{label}</span>
-      <span className="font-display text-3xl lg:text-4xl tracking-tight">{value}</span>
+      <div className="flex items-center gap-3">
+        <span className="font-display text-3xl lg:text-4xl tracking-tight">{value}</span>
+        {children}
+      </div>
       {sub && <span className="font-mono text-xs text-muted-foreground">{sub}</span>}
     </div>
   );
@@ -72,7 +76,9 @@ export function VaultStatsBar({ stats, basket, isLoading, onRefresh }: VaultStat
           <StatsSkeleton />
         ) : (
           <>
-            <StatCard label="cVAULT NAV" value={stats.navDisplay} sub="per token" />
+            <StatCard label="cVAULT NAV" value={stats.navDisplay} sub="per token">
+              <NavSparkline />
+            </StatCard>
             <StatCard label="Vault TVL" value={stats.tvlDisplay} sub="USDC deposited" />
             <StatCard label="cVAULT Supply" value={stats.supplyDisplay} />
             <StatCard label="Yield APY" value={`${stats.apy.toFixed(1)}%`} sub={`${stats.usxAllocationPct} to Solstice USX`} />
