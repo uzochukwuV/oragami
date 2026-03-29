@@ -1,4 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+
+(BigInt.prototype as any).toJSON = function () { return this.toString(); };
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 

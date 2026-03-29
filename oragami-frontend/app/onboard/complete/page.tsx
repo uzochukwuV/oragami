@@ -55,7 +55,7 @@ export default function CompletePage() {
         )}
 
         <button
-          onClick={() => router.push('/app/dashboard')}
+          onClick={() => router.push('/app')}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-foreground text-background font-mono text-xs tracking-widest uppercase hover:bg-foreground/90 transition-colors"
         >
           Enter Vault

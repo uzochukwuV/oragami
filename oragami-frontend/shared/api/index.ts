@@ -396,3 +396,70 @@ export function getHealth(): Promise<HealthResponse> {
 export function getCrankHealth(): Promise<CrankHealthResponse> {
   return apiFetch<CrankHealthResponse>('/health/cranks');
 }
+
+// ============================================================================
+// Multi-Asset Vault endpoints
+// ============================================================================
+
+export interface AssetVaultInfo {
+  assetMint: string;
+  shareMint: string;
+  vaultTokenAccount: string;
+  ticker: string;
+  navPriceBps: string;
+  navDisplay: string;
+  totalDeposits: string;
+  totalSupply: string;
+  minDeposit: string;
+  maxDeposit: string;
+  paused: boolean;
+}
+
+export interface MultiVaultCredential {
+  wallet: string;
+  credentialPda: string;
+  status: string;
+  tier?: number;
+  kycLevel?: number;
+  amlCoverage?: number;
+  jurisdiction?: string;
+  expiresAt?: string;
+  canDeposit: boolean;
+}
+
+export interface MultiVaultPreflight {
+  canDeposit: boolean;
+  reason?: string;
+  credentialStatus: string;
+  vault: { ticker: string; navPriceBps: string; navDisplay: string; paused: boolean };
+  estimatedShares: string;
+}
+
+export function getMultiVaults(): Promise<AssetVaultInfo[]> {
+  return apiFetch<AssetVaultInfo[]>('/api/multi-vault/vaults');
+}
+
+export function verifyMultiVaultCredential(wallet: string): Promise<MultiVaultCredential> {
+  return apiFetch<MultiVaultCredential>(`/api/multi-vault/credentials/${wallet}`);
+}
+
+export function multiVaultFaucet(
+  assetMint: string,
+  wallet: string,
+): Promise<{ success: boolean; ata: string; amount: number; txSignature: string }> {
+  return apiFetch(`/api/multi-vault/vaults/${assetMint}/faucet`, {
+    method: 'POST',
+    body: JSON.stringify({ wallet }),
+  });
+}
+
+export function preflightMultiVaultDeposit(
+  assetMint: string,
+  wallet: string,
+  amount: string,
+): Promise<MultiVaultPreflight> {
+  return apiFetch<MultiVaultPreflight>(`/api/multi-vault/vaults/${assetMint}/preflight`, {
+    method: 'POST',
+    body: JSON.stringify({ wallet, amount }),
+  });
+}

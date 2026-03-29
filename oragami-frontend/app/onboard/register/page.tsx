@@ -114,6 +114,10 @@ export default function RegisterPage() {
       await issueCredential(dto, adminKey);
       router.push('/onboard/pending');
     } catch (err: any) {
+      if (err?.status === 409) {
+        router.push('/onboard/pending');
+        return;
+      }
       setSubmitError(
         err?.body?.message || err?.message || 'Failed to issue credential',
       );

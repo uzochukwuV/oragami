@@ -29,7 +29,7 @@ export default function ConnectPage() {
         const res = await verifyCredential(wallet);
         switch (res.status) {
           case 'active':
-            router.replace('/app/dashboard');
+            router.replace('/app');
             break;
           case 'pending':
             router.replace('/onboard/pending');

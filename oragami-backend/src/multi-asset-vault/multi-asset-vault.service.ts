@@ -1,15 +1,27 @@
-import { Injectable, Logger, OnModuleInit, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet, BN, Idl } from '@coral-xyz/anchor';
+import {
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+} from '@solana/spl-token';
 import idl from './multi_asset_vault.idl.json';
 
-// ─── Seeds (must match the Rust contract) ────────────────────────────────────
+// Seeds — must match the Rust contract exactly
 const FACTORY_SEED = Buffer.from('factory');
 const ASSET_VAULT_SEED = Buffer.from('vault');
 const SHARE_MINT_SEED = Buffer.from('share_mint');
 const VAULT_TOKEN_SEED = Buffer.from('vault_token');
 const CREDENTIAL_SEED = Buffer.from('credential');
+// Credentials are issued BY the multi-asset vault program (6Mbzwuw8...)
+// PDA seeds = ["credential", wallet] under MULTI_VAULT_PROGRAM_ID
 
 export interface AssetVaultInfo {
   assetMint: string;
@@ -36,9 +48,6 @@ export class MultiAssetVaultService implements OnModuleInit {
 
   onModuleInit() {
     const rpcUrl = this.config.get<string>('SOLANA_RPC_URL')!;
-    const programId = new PublicKey(
-      this.config.get<string>('MULTI_VAULT_PROGRAM_ID')!,
-    );
     const keypairJson = this.config.get<string>('VAULT_AUTHORITY_KEYPAIR')!;
 
     this.connection = new Connection(rpcUrl, 'confirmed');
@@ -54,59 +63,52 @@ export class MultiAssetVaultService implements OnModuleInit {
 
     this.program = new Program(idl as Idl, provider);
     this.logger.log(
-      `MultiAssetVault initialized. Program: ${programId.toBase58()}`,
+      `MultiAssetVault initialized. Program: ${this.program.programId.toBase58()}`,
     );
   }
 
-  // ─── PDA derivation ──────────────────────────────────────────────────────────
+  // ─── PDA derivation ───────────────────────────────────────────────────────────
 
   deriveFactoryPda(): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
+    return PublicKey.findProgramAddressSync(
       [FACTORY_SEED],
       this.program.programId,
-    );
-    return pda;
+    )[0];
   }
 
   deriveVaultPda(assetMint: PublicKey): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
+    return PublicKey.findProgramAddressSync(
       [ASSET_VAULT_SEED, assetMint.toBuffer()],
       this.program.programId,
-    );
-    return pda;
+    )[0];
   }
 
   deriveShareMintPda(assetMint: PublicKey): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
+    return PublicKey.findProgramAddressSync(
       [SHARE_MINT_SEED, assetMint.toBuffer()],
       this.program.programId,
-    );
-    return pda;
+    )[0];
   }
 
   deriveVaultTokenPda(assetMint: PublicKey): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
+    return PublicKey.findProgramAddressSync(
       [VAULT_TOKEN_SEED, assetMint.toBuffer()],
       this.program.programId,
-    );
-    return pda;
+    )[0];
   }
 
+  // Credential PDA uses the SAME program as the vault (multi-asset vault program)
   deriveCredentialPda(wallet: PublicKey): PublicKey {
-    const [pda] = PublicKey.findProgramAddressSync(
+    return PublicKey.findProgramAddressSync(
       [CREDENTIAL_SEED, wallet.toBuffer()],
       this.program.programId,
-    );
-    return pda;
+    )[0];
   }
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────────────────────────────
 
   private tickerFromBytes(bytes: number[]): string {
-    return Buffer.from(bytes)
-      .toString('utf-8')
-      .replace(/\0/g, '')
-      .trim();
+    return Buffer.from(bytes).toString('utf-8').replace(/\0/g, '').trim();
   }
 
   private navToDisplay(navBps: string): string {
@@ -130,7 +132,13 @@ export class MultiAssetVaultService implements OnModuleInit {
     };
   }
 
-  // ─── Read factory ─────────────────────────────────────────────────────────────
+  private strToBytes(s: string, len: number): number[] {
+    const buf = Buffer.alloc(len, 0);
+    Buffer.from(s, 'utf-8').copy(buf);
+    return Array.from(buf);
+  }
+
+  // ─── Factory ──────────────────────────────────────────────────────────────────
 
   async getFactory() {
     const factoryPda = this.deriveFactoryPda();
@@ -149,7 +157,7 @@ export class MultiAssetVaultService implements OnModuleInit {
     }
   }
 
-  // ─── Read all vaults ──────────────────────────────────────────────────────────
+  // ─── Vaults ───────────────────────────────────────────────────────────────────
 
   async getAllVaults(): Promise<AssetVaultInfo[]> {
     const factory = await this.getFactory();
@@ -161,8 +169,6 @@ export class MultiAssetVaultService implements OnModuleInit {
     return vaults.filter(Boolean) as AssetVaultInfo[];
   }
 
-  // ─── Read single vault ────────────────────────────────────────────────────────
-
   async getVaultByMint(assetMintStr: string): Promise<AssetVaultInfo> {
     let assetMint: PublicKey;
     try {
@@ -170,7 +176,6 @@ export class MultiAssetVaultService implements OnModuleInit {
     } catch {
       throw new BadRequestException('Invalid asset mint address');
     }
-
     const vaultPda = this.deriveVaultPda(assetMint);
     try {
       const raw = await (this.program.account as any).assetVault.fetch(vaultPda);
@@ -180,33 +185,26 @@ export class MultiAssetVaultService implements OnModuleInit {
     }
   }
 
-  // ─── Set NAV (authority only) ─────────────────────────────────────────────────
+  // ─── NAV ──────────────────────────────────────────────────────────────────────
 
   async setNav(assetMintStr: string, navPriceBps: number): Promise<string> {
     if (!Number.isFinite(navPriceBps) || navPriceBps <= 0) {
       throw new BadRequestException('navPriceBps must be a positive integer');
     }
-
     const assetMint = new PublicKey(assetMintStr);
     const factoryPda = this.deriveFactoryPda();
     const vaultPda = this.deriveVaultPda(assetMint);
 
     const tx = await (this.program.methods as any)
       .setNav(new BN(navPriceBps))
-      .accounts({
-        factory: factoryPda,
-        assetVault: vaultPda,
-        authority: this.authority.publicKey,
-      })
+      .accounts({ factory: factoryPda, assetVault: vaultPda, authority: this.authority.publicKey })
       .rpc();
 
-    this.logger.log(
-      `set_nav: mint=${assetMintStr} nav=${navPriceBps} bps tx=${tx}`,
-    );
+    this.logger.log(`set_nav: mint=${assetMintStr} nav=${navPriceBps} bps tx=${tx}`);
     return tx;
   }
 
-  // ─── Verify credential ────────────────────────────────────────────────────────
+  // ─── Credentials ──────────────────────────────────────────────────────────────
 
   async verifyCredential(walletStr: string) {
     let wallet: PublicKey;
@@ -246,7 +244,86 @@ export class MultiAssetVaultService implements OnModuleInit {
     }
   }
 
-  // ─── Preflight deposit check ──────────────────────────────────────────────────
+  async issueCredential(
+    walletStr: string,
+    institutionName: string,
+    jurisdiction: string,
+    tier: number,
+    kycLevel: number,
+    amlCoverage: number,
+    expiresAt: string,
+  ) {
+    let wallet: PublicKey;
+    try {
+      wallet = new PublicKey(walletStr);
+    } catch {
+      throw new BadRequestException('Invalid wallet address');
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAtSec = Math.floor(new Date(expiresAt).getTime() / 1000);
+    if (expiresAtSec <= now) {
+      throw new BadRequestException('expiresAt must be in the future');
+    }
+
+    const factoryPda = this.deriveFactoryPda();
+    const credPda = this.deriveCredentialPda(wallet);
+
+    const tx = await (this.program.methods as any)
+      .issueCredential(
+        this.strToBytes(institutionName, 64),
+        this.strToBytes(jurisdiction.padEnd(4, '\0'), 4),
+        tier,
+        kycLevel,
+        amlCoverage,
+        new BN(expiresAtSec),
+      )
+      .accounts({
+        factory: factoryPda,
+        credential: credPda,
+        wallet,
+        authority: this.authority.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    this.logger.log(`Credential issued: wallet=${walletStr} tx=${tx}`);
+    return { success: true, credentialPda: credPda.toBase58(), txSignature: tx };
+  }
+
+  // ─── Faucet ───────────────────────────────────────────────────────────────────
+
+  async faucet(walletStr: string, assetMintStr: string, amount = 1_000_000_000) {
+    let wallet: PublicKey;
+    let assetMint: PublicKey;
+    try {
+      wallet = new PublicKey(walletStr);
+      assetMint = new PublicKey(assetMintStr);
+    } catch {
+      throw new BadRequestException('Invalid wallet or mint address');
+    }
+
+    const ata = await getOrCreateAssociatedTokenAccount(
+      this.connection,
+      this.authority,
+      assetMint,
+      wallet,
+    );
+
+    const tx = await mintTo(
+      this.connection,
+      this.authority,
+      assetMint,
+      ata.address,
+      this.authority,
+      BigInt(amount),
+    );
+
+    this.logger.log(`Faucet: minted ${amount} to ${walletStr} ata=${ata.address.toBase58()} tx=${tx}`);
+    return { success: true, ata: ata.address.toBase58(), amount, txSignature: tx };
+  }
+
+  // ─── Preflight ────────────────────────────────────────────────────────────────
 
   async preflightDeposit(walletStr: string, assetMintStr: string, amount: string) {
     const [cred, vault] = await Promise.all([
@@ -267,8 +344,8 @@ export class MultiAssetVaultService implements OnModuleInit {
     let reason: string | undefined;
     if (!cred.canDeposit) reason = `Credential ${cred.status}`;
     else if (vault.paused) reason = 'Vault is paused';
-    else if (amountBn < BigInt(vault.minDeposit)) reason = `Below minimum deposit of ${vault.minDeposit}`;
-    else if (amountBn > BigInt(vault.maxDeposit)) reason = `Exceeds maximum deposit of ${vault.maxDeposit}`;
+    else if (amountBn < BigInt(vault.minDeposit)) reason = `Below minimum deposit`;
+    else if (amountBn > BigInt(vault.maxDeposit)) reason = `Exceeds maximum deposit`;
 
     return {
       canDeposit,

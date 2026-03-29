@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -86,6 +87,17 @@ export class CredentialsService {
       issuedAt: new BN(issuedAt),
       expiresAt: new BN(expiresAt),
     };
+
+    // Guard: credential PDA already exists on-chain → re-issuance not allowed via this path
+    try {
+      await this.anchor.readCredential(walletPk);
+      throw new ConflictException(
+        'A credential already exists for this wallet. Revoke it before re-issuing.',
+      );
+    } catch (err) {
+      if (err instanceof ConflictException) throw err;
+      // account not found → safe to proceed
+    }
 
     const txSignature = await program.methods
       .issueCredential(params)

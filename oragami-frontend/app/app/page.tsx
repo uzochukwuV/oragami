@@ -87,8 +87,15 @@ export default function AppPage() {
               </span>
             </div>
 
-            {/* Right — risk scanner + wallet */}
+            {/* Right — asset vaults + risk scanner + wallet */}
             <div className="flex items-center gap-3">
+              <Link
+                href="/app/vaults"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors border border-foreground/10"
+              >
+                <span className="hidden sm:inline">Asset Vaults</span>
+                <span className="px-1.5 py-0.5 text-xs font-mono bg-green-500/10 text-green-500 rounded-full">NEW</span>
+              </Link>
               <button
                 onClick={() => setIsRiskScannerOpen(true)}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors border border-foreground/10"

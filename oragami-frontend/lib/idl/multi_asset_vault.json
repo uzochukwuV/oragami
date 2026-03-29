@@ -1,0 +1,1379 @@
+{
+  "address": "6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D",
+  "metadata": {
+    "name": "multi_asset_vault",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "asset_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_vault.asset_mint",
+                "account": "AssetVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "share_mint",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "depositor_asset_account",
+          "writable": true
+        },
+        {
+          "name": "depositor_share_account",
+          "writable": true
+        },
+        {
+          "name": "credential",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "depositor"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_factory",
+      "discriminator": [
+        179,
+        64,
+        75,
+        250,
+        39,
+        254,
+        240,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "factory",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "issue_credential",
+      "discriminator": [
+        255,
+        193,
+        171,
+        224,
+        68,
+        171,
+        194,
+        87
+      ],
+      "accounts": [
+        {
+          "name": "factory",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "credential",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wallet"
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "factory"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "institution_name",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "jurisdiction",
+          "type": {
+            "array": [
+              "u8",
+              4
+            ]
+          }
+        },
+        {
+          "name": "tier",
+          "type": "u8"
+        },
+        {
+          "name": "kyc_level",
+          "type": "u8"
+        },
+        {
+          "name": "aml_coverage",
+          "type": "u8"
+        },
+        {
+          "name": "expires_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "pause_vault",
+      "discriminator": [
+        250,
+        6,
+        228,
+        57,
+        6,
+        104,
+        19,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "factory",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_vault.asset_mint",
+                "account": "AssetVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "factory"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "redeem",
+      "discriminator": [
+        184,
+        12,
+        86,
+        149,
+        70,
+        196,
+        97,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "asset_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_vault.asset_mint",
+                "account": "AssetVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "share_mint",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "redeemer_share_account",
+          "writable": true
+        },
+        {
+          "name": "redeemer_asset_account",
+          "writable": true
+        },
+        {
+          "name": "redeemer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "share_amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "register_asset",
+      "discriminator": [
+        21,
+        80,
+        155,
+        149,
+        117,
+        207,
+        235,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "factory",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "share_mint",
+          "docs": [
+            "Share token mint — minted by the vault PDA as authority",
+            "seeds = [b\"share_mint\", asset_mint]"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  104,
+                  97,
+                  114,
+                  101,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "docs": [
+            "Vault's token account for holding deposited asset tokens",
+            "seeds = [b\"vault_token\", asset_mint]"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  116,
+                  111,
+                  107,
+                  101,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint",
+          "docs": [
+            "The asset SPL mint (e.g. GOLD-mock)"
+          ]
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "factory"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "ticker",
+          "type": {
+            "array": [
+              "u8",
+              8
+            ]
+          }
+        },
+        {
+          "name": "nav_price_bps",
+          "type": "u64"
+        },
+        {
+          "name": "min_deposit",
+          "type": "u64"
+        },
+        {
+          "name": "max_deposit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "revoke_credential",
+      "discriminator": [
+        38,
+        123,
+        95,
+        95,
+        223,
+        158,
+        169,
+        87
+      ],
+      "accounts": [
+        {
+          "name": "factory",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "credential",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "credential.wallet",
+                "account": "ComplianceCredential"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "factory"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_nav",
+      "discriminator": [
+        20,
+        56,
+        221,
+        68,
+        182,
+        233,
+        75,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "factory",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_vault.asset_mint",
+                "account": "AssetVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "factory"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "nav_price_bps",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "transfer_shares",
+      "docs": [
+        "Transfer share tokens between two credentialed institutions.",
+        "Both sender and receiver must hold active credentials.",
+        "The underlying asset stays in the vault — only the share changes hands."
+      ],
+      "discriminator": [
+        23,
+        136,
+        140,
+        15,
+        181,
+        54,
+        120,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "asset_vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_vault.asset_mint",
+                "account": "AssetVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sender_share_account",
+          "docs": [
+            "Sender's share token account (e.g. their VAULT-GOLD ATA)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "receiver_share_account",
+          "docs": [
+            "Receiver's share token account — must already exist"
+          ],
+          "writable": true
+        },
+        {
+          "name": "sender_credential",
+          "docs": [
+            "Sender's compliance credential"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "sender"
+              }
+            ]
+          }
+        },
+        {
+          "name": "receiver_credential",
+          "docs": [
+            "Receiver's compliance credential",
+            "seeds = [b\"credential\", receiver_share_account.owner]"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "receiver_share_account.owner",
+                "account": "TokenAccount"
+              }
+            ]
+          }
+        },
+        {
+          "name": "sender",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AssetVault",
+      "discriminator": [
+        193,
+        119,
+        127,
+        25,
+        157,
+        102,
+        175,
+        164
+      ]
+    },
+    {
+      "name": "ComplianceCredential",
+      "discriminator": [
+        211,
+        133,
+        119,
+        195,
+        6,
+        38,
+        240,
+        69
+      ]
+    },
+    {
+      "name": "Factory",
+      "discriminator": [
+        159,
+        68,
+        192,
+        61,
+        48,
+        249,
+        216,
+        202
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "DepositMade",
+      "discriminator": [
+        210,
+        201,
+        130,
+        183,
+        244,
+        203,
+        155,
+        199
+      ]
+    },
+    {
+      "name": "NavUpdated",
+      "discriminator": [
+        182,
+        153,
+        142,
+        26,
+        205,
+        24,
+        110,
+        154
+      ]
+    },
+    {
+      "name": "RedeemMade",
+      "discriminator": [
+        249,
+        200,
+        150,
+        95,
+        11,
+        190,
+        246,
+        186
+      ]
+    },
+    {
+      "name": "TransferMade",
+      "discriminator": [
+        107,
+        98,
+        93,
+        41,
+        77,
+        148,
+        41,
+        233
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "AssetAlreadyRegistered",
+      "msg": "Asset is already registered in this factory"
+    },
+    {
+      "code": 6001,
+      "name": "FactoryFull",
+      "msg": "Factory has reached the maximum number of registered assets"
+    },
+    {
+      "code": 6002,
+      "name": "VaultPaused",
+      "msg": "Vault is paused"
+    },
+    {
+      "code": 6003,
+      "name": "DepositTooSmall",
+      "msg": "Deposit amount is below the vault minimum"
+    },
+    {
+      "code": 6004,
+      "name": "DepositTooLarge",
+      "msg": "Deposit amount exceeds the vault maximum"
+    },
+    {
+      "code": 6005,
+      "name": "InsufficientVaultFunds",
+      "msg": "Vault has insufficient asset tokens for this redemption"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidNav",
+      "msg": "NAV must be greater than zero"
+    },
+    {
+      "code": 6007,
+      "name": "NavChangeTooLarge",
+      "msg": "NAV change exceeds the 50% maximum per update"
+    },
+    {
+      "code": 6008,
+      "name": "CredentialNotActive",
+      "msg": "Wallet does not hold an active compliance credential"
+    },
+    {
+      "code": 6009,
+      "name": "CredentialExpired",
+      "msg": "Compliance credential has expired"
+    },
+    {
+      "code": 6010,
+      "name": "CredentialWalletMismatch",
+      "msg": "Credential wallet does not match the depositor"
+    },
+    {
+      "code": 6011,
+      "name": "CredentialAlreadyRevoked",
+      "msg": "Credential is already revoked"
+    },
+    {
+      "code": 6012,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6013,
+      "name": "ZeroShares",
+      "msg": "Share amount must be greater than zero"
+    },
+    {
+      "code": 6014,
+      "name": "ReceiverCredentialNotActive",
+      "msg": "Receiver wallet does not hold an active compliance credential"
+    },
+    {
+      "code": 6015,
+      "name": "ReceiverCredentialExpired",
+      "msg": "Receiver compliance credential has expired"
+    },
+    {
+      "code": 6016,
+      "name": "WrongShareMint",
+      "msg": "Share token mint does not match this vault"
+    }
+  ],
+  "types": [
+    {
+      "name": "AssetVault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "asset_mint",
+            "docs": [
+              "The SPL token this vault accepts (e.g. GOLD-mock mint)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "share_mint",
+            "docs": [
+              "The share token this vault mints (e.g. VAULT-GOLD mint)",
+              "seeds = [b\"share_mint\", asset_mint]"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "vault_token_account",
+            "docs": [
+              "PDA token account holding deposited asset tokens",
+              "seeds = [b\"vault_token\", asset_mint]"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "nav_price_bps",
+            "docs": [
+              "NAV in basis points: 10000 = 1:1, 10500 = 1 share = 1.05 asset tokens"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_deposits",
+            "docs": [
+              "Total asset tokens deposited (raw, 6 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_supply",
+            "docs": [
+              "Total share tokens in circulation"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_deposit",
+            "docs": [
+              "Minimum deposit in asset token raw units"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_deposit",
+            "docs": [
+              "Maximum deposit in asset token raw units"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ticker",
+            "docs": [
+              "Human-readable ticker, e.g. b\"GOLD\\0\\0\\0\\0\""
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ComplianceCredential",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "wallet",
+            "docs": [
+              "The institution wallet this credential gates"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "institution_name",
+            "docs": [
+              "Legal entity name, UTF-8 null-padded"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "jurisdiction",
+            "docs": [
+              "ISO 3166-1 alpha-2, e.g. b\"CH\\0\\0\""
+            ],
+            "type": {
+              "array": [
+                "u8",
+                4
+              ]
+            }
+          },
+          {
+            "name": "tier",
+            "docs": [
+              "1 = retail, 2 = professional, 3 = institutional"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "kyc_level",
+            "docs": [
+              "1 = basic, 2 = enhanced, 3 = full"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "aml_coverage",
+            "docs": [
+              "0–100 AML score"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "issued_at",
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "1 = active, 3 = revoked"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepositMade",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_amount",
+            "type": "u64"
+          },
+          {
+            "name": "shares_minted",
+            "type": "u64"
+          },
+          {
+            "name": "nav_bps",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Factory",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Wallet that can register assets, set NAV, issue credentials"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "docs": [
+              "Fee taken on deposit in basis points (e.g. 10 = 0.10%)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "registered_assets",
+            "docs": [
+              "Mints of all registered asset vaults (gold-mock, silver-mock, ...)"
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "NavUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_nav_bps",
+            "type": "u64"
+          },
+          {
+            "name": "new_nav_bps",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RedeemMade",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "redeemer",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares_burned",
+            "type": "u64"
+          },
+          {
+            "name": "asset_amount_returned",
+            "type": "u64"
+          },
+          {
+            "name": "nav_bps",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TransferMade",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "sender",
+            "type": "pubkey"
+          },
+          {
+            "name": "receiver",
+            "type": "pubkey"
+          },
+          {
+            "name": "share_amount",
+            "type": "u64"
+          },
+          {
+            "name": "nav_bps",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    {
+      "name": "ASSET_VAULT_SEED",
+      "type": "bytes",
+      "value": "[118, 97, 117, 108, 116]"
+    },
+    {
+      "name": "CREDENTIAL_SEED",
+      "type": "bytes",
+      "value": "[99, 114, 101, 100, 101, 110, 116, 105, 97, 108]"
+    },
+    {
+      "name": "FACTORY_SEED",
+      "type": "bytes",
+      "value": "[102, 97, 99, 116, 111, 114, 121]"
+    },
+    {
+      "name": "SHARE_MINT_SEED",
+      "type": "bytes",
+      "value": "[115, 104, 97, 114, 101, 95, 109, 105, 110, 116]"
+    },
+    {
+      "name": "VAULT_TOKEN_SEED",
+      "type": "bytes",
+      "value": "[118, 97, 117, 108, 116, 95, 116, 111, 107, 101, 110]"
+    }
+  ]
+}
