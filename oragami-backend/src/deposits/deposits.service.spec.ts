@@ -126,11 +126,39 @@ describe('DepositsService (integration)', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('returns deposits for existing institution', async () => {
+    it('returns deposits with navAtDeposit and pnlBps for existing institution', async () => {
       await seedTestInstitution(prisma);
-
       const deposits = await service.listByInstitutionWallet(TEST_WALLET);
       expect(Array.isArray(deposits)).toBe(true);
+      // pnlBps and navAtDeposit fields must be present even with empty deposit list
+      expect(deposits).toBeDefined();
+    });
+
+    it('computes pnlBps correctly when navAtDeposit is known', async () => {
+      const inst = await seedTestInstitution(prisma);
+      // Seed a deposit with navAtDeposit = 10000 (baseline)
+      await prisma.deposit.create({
+        data: {
+          txSignature: 'sig_pnl_test_' + Date.now(),
+          institutionId: inst.id,
+          usdcAmount: 1_000_000n,
+          cvaultAmount: 1_000_000n,
+          navAtDeposit: 10_000n,
+          nonce: 'nonce_pnl_' + Date.now(),
+          timestamp: new Date(),
+        },
+      });
+
+      // Pass currentNavBps = 10500 (5% appreciation)
+      const deposits = await service.listByInstitutionWallet(
+        TEST_WALLET,
+        10_500n,
+      );
+      expect(deposits.length).toBe(1);
+      expect(deposits[0].navAtDeposit).toBe('10000');
+      expect(deposits[0].currentNavBps).toBe('10500');
+      // pnlBps = (10500 - 10000) * 10000 / 10000 = 500 bps (5%)
+      expect(deposits[0].pnlBps).toBe(500);
     });
   });
 

@@ -67,6 +67,20 @@ export class VaultService implements OnModuleInit {
     };
   }
 
+  async navCurrent() {
+    const row = await this.prisma.navSnapshot.findFirst({
+      orderBy: { timestamp: 'desc' },
+    });
+    return {
+      navBps: row ? row.navBps.toString() : null,
+      source: row?.source ?? null,
+      goldPrice: (row?.rawPayload as any)?.goldPrice ?? null,
+      chfUsd: (row?.rawPayload as any)?.chfUsd ?? null,
+      eusxNav: (row?.rawPayload as any)?.eusxNav ?? null,
+      timestamp: row?.timestamp?.toISOString() ?? null,
+    };
+  }
+
   async navHistory(limit = 100) {
     const take = Math.min(500, Math.max(1, limit));
     return this.prisma.navSnapshot.findMany({

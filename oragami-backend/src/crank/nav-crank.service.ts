@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AnchorService } from '../solana/anchor.service';
 import { SolsticeService } from '../solana/solstice.service';
 import { SixService } from '../data/six.service';
+import { CrankStateService } from '../health/crank-state.service';
 
 // ─── SIX VALOR_BC identifiers ────────────────────────────────────────────────
 // Format: {valor}_{marketBc}  scheme=VALOR_BC
@@ -47,17 +48,22 @@ export class NavCrankService {
     private readonly anchor: AnchorService,
     private readonly solstice: SolsticeService,
     private readonly six: SixService,
+    private readonly crankState: CrankStateService,
   ) {}
 
   // ─── Scheduled: every 2 minutes for demo, every 15 min in production ────────
   @Cron('*/2 * * * *')
   async runNavCrank(): Promise<void> {
+    let success = false;
     try {
-      await this.updateNav();
+      const result = await this.updateNav();
+      success = result.txSignature !== null;
     } catch (err) {
       this.logger.error(
         `NAV crank unhandled error: ${err instanceof Error ? err.message : String(err)}`,
       );
+    } finally {
+      this.crankState.recordNavRun(success);
     }
   }
 
@@ -189,6 +195,11 @@ export class NavCrankService {
       txSignature = tx;
       this.lastOnChainUpdateMs = Date.now();
       this.logger.log(`NAV updated on-chain: ${newNavBps} bps | tx=${tx}`);
+
+      // ── 7a. Minimal yield tick (ISSUE #7 stub) ────────────────────────────
+      // Calls process_yield on-chain so pending_yield accumulates each crank
+      // cycle. No Solstice CPI here — that is the full ISSUE #7 work below.
+      await this.tickYield(currentNavBps, newNavBps, usxAllocationBps, eusxNav);
     } catch (err) {
       this.logger.error(
         `set_nav on-chain failed: ${err instanceof Error ? err.message : err}`,

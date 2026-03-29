@@ -22,6 +22,15 @@ const ONCHAIN_CREDENTIAL_STATUS = {
   REVOKED: 3,
 } as const;
 
+/** Tier 1 institutions always require travel rule; tier 2+ only above threshold. */
+const TRAVEL_RULE_THRESHOLD_USDC = 1_000_000_000n; // 1000 USDC
+
+function requiresTravelRule(tier: number, usdcAmount?: bigint): boolean {
+  if (tier <= 1) return true;
+  if (usdcAmount !== undefined) return usdcAmount >= TRAVEL_RULE_THRESHOLD_USDC;
+  return false;
+}
+
 @Injectable()
 export class CredentialsService {
   private readonly logger = new Logger(CredentialsService.name);
@@ -208,7 +217,7 @@ export class CredentialsService {
           status: 'revoked' as const,
           tier: row.tier,
           expiresAt: row.credentialExpiresAt?.toISOString() ?? '',
-          requiresTravelRule: true,
+          requiresTravelRule: requiresTravelRule(row.tier),
         };
       }
       return {
@@ -216,7 +225,7 @@ export class CredentialsService {
         status: 'not_found' as const,
         tier: row.tier,
         expiresAt: row.credentialExpiresAt?.toISOString() ?? '',
-        requiresTravelRule: true,
+        requiresTravelRule: requiresTravelRule(row.tier),
       };
     }
 
@@ -236,7 +245,7 @@ export class CredentialsService {
         status: 'revoked' as const,
         tier,
         expiresAt: expiresAt.toISOString(),
-        requiresTravelRule: true,
+        requiresTravelRule: requiresTravelRule(tier),
       };
     }
     if (expiresAtSec < now) {
@@ -245,7 +254,7 @@ export class CredentialsService {
         status: 'expired' as const,
         tier,
         expiresAt: expiresAt.toISOString(),
-        requiresTravelRule: true,
+        requiresTravelRule: requiresTravelRule(tier),
       };
     }
     if (statusByte === ONCHAIN_CREDENTIAL_STATUS.ACTIVE) {
@@ -254,7 +263,7 @@ export class CredentialsService {
         status: 'active' as const,
         tier,
         expiresAt: expiresAt.toISOString(),
-        requiresTravelRule: true,
+        requiresTravelRule: requiresTravelRule(tier),
       };
     }
 
@@ -263,7 +272,7 @@ export class CredentialsService {
       status: 'not_found' as const,
       tier,
       expiresAt: expiresAt.toISOString(),
-      requiresTravelRule: true,
+      requiresTravelRule: requiresTravelRule(tier),
     };
   }
 }

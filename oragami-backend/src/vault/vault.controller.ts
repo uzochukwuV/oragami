@@ -10,6 +10,11 @@ export class VaultController {
     return this.vault.getState();
   }
 
+  @Get('nav/current')
+  navCurrent() {
+    return this.vault.navCurrent();
+  }
+
   @Get('nav/history')
   navHistory(@Query('limit') limit?: string) {
     const parsed = limit ? parseInt(limit, 10) : 100;

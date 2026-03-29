@@ -8,7 +8,7 @@
 Before writing a single line of backend, two contract fixes are mandatory.
 Both are blocking — backend code that calls the wrong on-chain shape will fail silently.
 
-### CONTRACT FIX 1 — `VaultState::SIZE` is wrong
+### CONTRACT FIX 1 — `VaultState::SIZE` is wrong ✅ COMPLETED
 **Current constant:** 263 bytes
 **Actual byte count (manual):**
 ```
@@ -40,7 +40,7 @@ looks like a wallet balance problem — very hard to debug under hackathon press
 
 ---
 
-### CONTRACT FIX 2 — Real USX flow requires replacing `mock_usx_mint` with `usx_mint`
+### CONTRACT FIX 2 — Real USX flow requires replacing `mock_usx_mint` with `usx_mint` ✅ COMPLETED
 
 The mock mint design works for demo but judges will look for real Solstice integration.
 Since the hackathon provides devnet USX, replace the mock with the real devnet USX mint.
@@ -246,7 +246,7 @@ model AuditEvent {
 
 ---
 
-### ISSUE #3 — Anchor client singleton service ✅ COMPLETED
+### ISSUE #3 — Anchor client singleton service ✅ COMPLETED ✅ COMPLETED
 **Labels:** `blockchain` `blocking`
 **Estimate:** 1 hour
 **Depends on:** #1
@@ -273,7 +273,7 @@ VAULT_PROGRAM_ID=GRk6Qv4rAzWf1DiKPv5FLKPvGKkk8rEdNGDoK6VMf8sX
 
 ---
 
-### ISSUE #4 — Solstice USX instruction service ✅ COMPLETED
+### ISSUE #4 — Solstice USX instruction service ✅ COMPLETED ✅ COMPLETED
 **Labels:** `blockchain` `yield`
 **Estimate:** 1 hour
 **Depends on:** #3
@@ -304,7 +304,7 @@ VAULT_PROGRAM_ID=GRk6Qv4rAzWf1DiKPv5FLKPvGKkk8rEdNGDoK6VMf8sX
 
 ---
 
-### ISSUE #5 — SIX API service
+### ISSUE #5 — SIX API service ✅ COMPLETED
 **Labels:** `data` `nav`
 **Estimate:** 1 hour
 **Depends on:** #1
@@ -350,7 +350,7 @@ SIX_TOKEN_URL=https://api.six-group.com/oauth2/token
 
 ---
 
-### ISSUE #6 — NAV update crank
+### ISSUE #6 — NAV update crank ✅ COMPLETED
 **Labels:** `crank` `nav` `critical`
 **Estimate:** 1.5 hours
 **Depends on:** #3, #4, #5
@@ -387,7 +387,7 @@ For hackathon demo: every 2 minutes unconditionally.
 
 ---
 
-### ISSUE #7 — Yield accrual crank
+### ISSUE #7 — Yield accrual crank ❌ NOT IMPLEMENTED
 **Labels:** `crank` `yield` `critical`
 **Estimate:** 1.5 hours
 **Depends on:** #3, #4
@@ -446,7 +446,7 @@ For hackathon demo: every 2 minutes unconditionally.
 
 ---
 
-### ISSUE #8 — Credentials module
+### ISSUE #8 — Credentials module ✅ COMPLETED
 **Labels:** `api` `compliance`
 **Estimate:** 1.5 hours
 **Depends on:** #2, #3
@@ -511,7 +511,7 @@ class IssueCredentialDto {
 
 ---
 
-### ISSUE #9 — Travel Rule module
+### ISSUE #9 — Travel Rule module ✅ COMPLETED
 **Labels:** `api` `compliance`
 **Estimate:** 1 hour
 **Depends on:** #2, #3
@@ -554,7 +554,7 @@ The client needs it to re-derive the travel rule PDA when constructing the depos
 
 ---
 
-### ISSUE #10 — Deposits module (indexing only — tx built client-side)
+### ISSUE #10 — Deposits module (indexing only — tx built client-side) ✅ COMPLETED
 **Labels:** `api` `indexing`
 **Estimate:** 1 hour
 **Depends on:** #2, #3
@@ -602,7 +602,7 @@ GET   /api/deposits/institution/:wallet   Deposits for a specific institution
 
 ---
 
-### ISSUE #11 — Vault state module
+### ISSUE #11 — Vault state module ✅ COMPLETED
 **Labels:** `api` `dashboard`
 **Estimate:** 45 min
 **Depends on:** #3, #4, #5
@@ -651,7 +651,7 @@ GET  /api/vault/stats          Aggregated dashboard stats
 
 ---
 
-### ISSUE #12 — Audit log module
+### ISSUE #12 — Audit log module ❌ NOT IMPLEMENTED
 **Labels:** `api` `compliance`
 **Estimate:** 30 min
 **Depends on:** #2
@@ -673,7 +673,7 @@ GET  /api/audit/export/csv   Export as CSV for compliance reports
 
 ---
 
-### ISSUE #13 — WebSocket gateway (live dashboard)
+### ISSUE #13 — WebSocket gateway (live dashboard) ❌ NOT IMPLEMENTED
 **Labels:** `api` `realtime`
 **Estimate:** 45 min
 **Depends on:** #6, #7
@@ -703,7 +703,7 @@ Frontend subscribes to these for the live SIX FX ticker and yield accumulation c
 
 ---
 
-### ISSUE #14 — Seed script for demo day
+### ISSUE #14 — Seed script for demo day ✅ COMPLETED
 **Labels:** `demo` `data`
 **Estimate:** 30 min
 **Depends on:** all above
@@ -726,7 +726,7 @@ Frontend subscribes to these for the live SIX FX ticker and yield accumulation c
 
 ---
 
-### ISSUE #15 — Health + readiness endpoints
+### ISSUE #15 — Health + readiness endpoints ✅ COMPLETED
 **Labels:** `ops` `demo`
 **Estimate:** 20 min
 
@@ -739,7 +739,7 @@ For demo: embed these in the dashboard UI so judges can see all systems green.
 
 ---
 
-### ISSUE #16 — Environment config and `.env.example`
+### ISSUE #16 — Environment config and `.env.example` ✅ COMPLETED
 **Labels:** `ops` `docs`
 **Estimate:** 20 min
 
@@ -777,7 +777,7 @@ DISTRIBUTE_THRESHOLD=1000000    # 1 USDC in raw units
 
 ---
 
-### ISSUE #17 — Integration test: full yield cycle
+### ISSUE #17 — Integration test: full yield cycle ❌ NOT IMPLEMENTED
 **Labels:** `testing` `yield` `critical`
 **Estimate:** 2 hours
 **Depends on:** all milestones above

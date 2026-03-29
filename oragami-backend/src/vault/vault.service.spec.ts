@@ -51,6 +51,30 @@ describe('VaultService (integration)', () => {
     expect(state).toHaveProperty('vaultUsxBalance');
   });
 
+  it('navCurrent returns null when no snapshots exist', async () => {
+    const result = await service.navCurrent();
+    expect(result.navBps).toBeNull();
+    expect(result.timestamp).toBeNull();
+  });
+
+  it('navCurrent returns latest snapshot from DB', async () => {
+    await prisma.navSnapshot.create({
+      data: {
+        navBps: 10250n,
+        source: 'SIX',
+        rawPayload: { goldPrice: 2350.5, chfUsd: 1.12, eusxNav: 1.002 },
+        timestamp: new Date(),
+      },
+    });
+
+    const result = await service.navCurrent();
+    expect(result.navBps).toBe('10250');
+    expect(result.source).toBe('SIX');
+    expect(result.goldPrice).toBe(2350.5);
+    expect(result.chfUsd).toBe(1.12);
+    expect(result.timestamp).toBeDefined();
+  });
+
   it('navHistory returns data from Postgres', async () => {
     await prisma.navSnapshot.create({
       data: {

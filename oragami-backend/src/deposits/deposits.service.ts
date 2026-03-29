@@ -138,15 +138,44 @@ export class DepositsService {
     });
   }
 
-  async listByInstitutionWallet(wallet: string) {
+  async listByInstitutionWallet(wallet: string, currentNavBps?: bigint) {
     const inst = await this.prisma.institution.findUnique({
       where: { walletAddress: wallet },
     });
     if (!inst) throw new NotFoundException('Institution not found');
-    return this.prisma.deposit.findMany({
+
+    let navBps = currentNavBps;
+    if (navBps === undefined) {
+      try {
+        const vs = await this.anchor.readVaultState();
+        navBps = BigInt(
+          vs.navPriceBps?.toString?.() ?? vs.navPriceBps ?? 10_000,
+        );
+      } catch {
+        navBps = 10_000n;
+      }
+    }
+
+    const deposits = await this.prisma.deposit.findMany({
       where: { institutionId: inst.id },
       orderBy: { createdAt: 'desc' },
       include: { travelRule: true },
+    });
+
+    return deposits.map((d) => {
+      const nav = navBps as bigint;
+      const pnlBps =
+        d.navAtDeposit > 0n
+          ? Number(((nav - d.navAtDeposit) * 10_000n) / d.navAtDeposit)
+          : 0;
+      return {
+        ...d,
+        usdcAmount: d.usdcAmount.toString(),
+        cvaultAmount: d.cvaultAmount.toString(),
+        navAtDeposit: d.navAtDeposit.toString(),
+        currentNavBps: nav.toString(),
+        pnlBps,
+      };
     });
   }
 }

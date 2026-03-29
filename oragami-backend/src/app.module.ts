@@ -11,6 +11,7 @@ import { TravelRuleModule } from './travel-rule/travel-rule.module';
 import { DepositsModule } from './deposits/deposits.module';
 import { VaultModule } from './vault/vault.module';
 import { HealthModule } from './health/health.module';
+import { CrankModule } from './crank/crank.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { HealthModule } from './health/health.module';
     DepositsModule,
     VaultModule,
     HealthModule,
+    CrankModule,
   ],
   controllers: [AppController],
   providers: [AppService],
