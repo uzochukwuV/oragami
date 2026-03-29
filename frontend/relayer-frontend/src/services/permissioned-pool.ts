@@ -39,13 +39,12 @@ export async function createPool(
   config: PoolConfig
 ): Promise<{ poolAddress: string; lpMint: string }> {
   // Generate PDA for the pool
-  const [poolAddress] = PublicKey.findProgramAddress(
+  const [poolAddress] = PublicKey.findProgramAddressSync(
     [Buffer.from(POOL_SEED), config.tokenAMint.toBuffer()],
     POOL_PROGRAM_ID
   );
   
-  // Generate PDA for LP token mint
-  const [lpMint] = PublicKey.findProgramAddress(
+  const [lpMint] = PublicKey.findProgramAddressSync(
     [Buffer.from(POOL_LIQUIDITY_SEED), config.tokenAMint.toBuffer()],
     POOL_PROGRAM_ID
   );

@@ -28,6 +28,7 @@ use solana_compliance_relayer::infra::{
     BlocklistManager, PostgresClient, PostgresConfig, PrivacyHealthCheckConfig,
     PrivacyHealthCheckService, signing_key_from_base58,
 };
+use solana_compliance_relayer::infra::six::{SixApiClient, SixConfig};
 
 /// Application configuration
 struct Config {
@@ -404,6 +405,18 @@ async fn main() -> Result<()> {
     ));
     let app_state = app_state.with_risk_service(risk_service);
     info!("   ✓ Risk check service initialized");
+
+    // Initialize SIX Financial Data API client (optional)
+    let app_state = match SixApiClient::new(SixConfig::default()).await {
+        Ok(six_client) => {
+            info!("   ✓ SIX Financial Data API client initialized");
+            app_state.with_six_client(Arc::new(six_client))
+        }
+        Err(e) => {
+            warn!("   ⚠ SIX API client not initialized: {} (set SIX_CERT_PATH env var)", e);
+            app_state
+        }
+    };
 
     let app_state = Arc::new(app_state);
 

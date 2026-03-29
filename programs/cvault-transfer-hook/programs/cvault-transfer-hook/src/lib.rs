@@ -1,60 +1,467 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::TokenAccount;
+use anchor_spl::token_interface::TokenAccount;
+use spl_transfer_hook_interface::instruction::ExecuteInstruction;
+use spl_tlv_account_resolution::{
+    account::ExtraAccountMeta,
+    seeds::Seed,
+    state::ExtraAccountMetaList,
+};
 
-/// cVAULT-TRADE Transfer Hook Program
-/// 
-/// This program enforces compliance on every transfer of cVAULT-TRADE tokens.
-/// It validates:
-/// 1. KYC/AML compliance via Chainlink ACE (or mock oracle)
-/// 2. Whitelisting status
-/// 3. Travel Rule metadata
-
-declare_id!("Cvau1tT3xGK9XQDqVjG1qGjvMaVQDqVjG1qGjvMaVQD");
+declare_id!("965gkqvNvYbUsSdqz4AB3YvBw9hqQuNeKMYzHxQBsP1N");
 
 pub const WHITELIST_SEED: &[u8] = b"whitelist";
 pub const COMPLIANCE_SEED: &[u8] = b"compliance";
+pub const EXTRA_ACCOUNT_METAS_SEED: &[u8] = b"extra-account-metas";
 
-/// Whitelist entry - tracks compliant wallet addresses
+#[program]
+pub mod cvault_transfer_hook {
+    use super::*;
+
+    /// Initialize compliance configuration.
+    /// Called once during program setup.
+    pub fn initialize_compliance(
+        ctx: Context<InitializeCompliance>,
+        params: InitializeComplianceParams,
+    ) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        config.authority = params.authority;
+        config.compliance_oracle = params.compliance_oracle;
+        config.min_kyc_level = 1;
+        config.allow_transfers = true;
+        config.bump = ctx.bumps.config;
+        msg!("Compliance config initialized, authority: {}", config.authority);
+        Ok(())
+    }
+
+    /// Initialize extra account metas for the transfer hook.
+    ///
+    /// Token-2022 calls this PDA to discover which additional accounts to pass
+    /// to the hook on every transfer. We register 3 extra accounts:
+    ///   [0] compliance config PDA  — seeds: ["compliance"]
+    ///   [1] source whitelist PDA   — seeds: ["whitelist", source_token.owner]
+    ///   [2] dest whitelist PDA     — seeds: ["whitelist", destination_token.owner]
+    ///
+    /// Accounts [1] and [2] are optional (may not exist) — the hook handles that.
+    pub fn initialize_extra_account_metas(
+        ctx: Context<InitializeExtraAccountMetas>,
+    ) -> Result<()> {
+        // Build the 3 extra account metas the hook needs at transfer time.
+        // In spl-tlv-account-resolution 0.10.0, Seed::Literal takes a fixed-size array.
+        // We use ExtraAccountMeta::new_with_seeds which takes &[Seed], is_signer, is_writable.
+        let account_metas = vec![
+            // [0] Compliance config PDA — seeds: ["compliance"]
+            ExtraAccountMeta::new_with_seeds(
+                &[
+                    Seed::Literal {
+                        bytes: COMPLIANCE_SEED.to_vec(),
+                    },
+                ],
+                false,
+                false,
+            ).map_err(|_| error!(TransferHookError::Unauthorized))?,
+
+            // [1] Source wallet whitelist PDA — seeds: ["whitelist", source_token.owner]
+            // Account index 3 in the Token-2022 transfer instruction is the owner.
+            ExtraAccountMeta::new_with_seeds(
+                &[
+                    Seed::Literal {
+                        bytes: WHITELIST_SEED.to_vec(),
+                    },
+                    Seed::AccountKey { index: 3 },
+                ],
+                false,
+                false,
+            ).map_err(|_| error!(TransferHookError::Unauthorized))?,
+
+            // [2] Destination wallet whitelist PDA — seeds: ["whitelist", destination_token.owner]
+            // destination_token.owner is resolved from account index 2.
+            ExtraAccountMeta::new_with_seeds(
+                &[
+                    Seed::Literal {
+                        bytes: WHITELIST_SEED.to_vec(),
+                    },
+                    Seed::AccountKey { index: 2 },
+                ],
+                false,
+                false,
+            ).map_err(|_| error!(TransferHookError::Unauthorized))?,
+        ];
+
+        let account_size = ExtraAccountMetaList::size_of(account_metas.len())
+            .map_err(|_| error!(TransferHookError::Unauthorized))?;
+
+        let account_info = ctx.accounts.extra_account_metas.to_account_info();
+        if account_info.data_len() < account_size {
+            account_info.resize(account_size)?;
+        }
+
+        let mut data = account_info.try_borrow_mut_data()?;
+        ExtraAccountMetaList::init::<ExecuteInstruction>(&mut data, &account_metas)
+            .map_err(|_| error!(TransferHookError::Unauthorized))?;
+
+        msg!(
+            "Extra account metas initialized for mint: {}, {} accounts registered",
+            ctx.accounts.mint.key(),
+            account_metas.len()
+        );
+        Ok(())
+    }
+
+    /// Add a wallet to the compliance whitelist.
+    pub fn add_to_whitelist(
+        ctx: Context<AddToWhitelist>,
+        params: AddWhitelistParams,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        let entry = &mut ctx.accounts.entry;
+
+        entry.wallet = ctx.accounts.wallet.key();
+        entry.kyc_compliant = params.kyc_compliant;
+        entry.aml_clear = params.aml_clear;
+        entry.travel_rule_compliant = params.travel_rule_compliant;
+        entry.added_at = clock.unix_timestamp;
+        entry.expiry = clock.unix_timestamp + (params.expiry_days * 86400);
+        entry.bump = ctx.bumps.entry;
+
+        msg!("Added {} to whitelist, expires at {}", entry.wallet, entry.expiry);
+        Ok(())
+    }
+
+    /// Remove a wallet from the whitelist.
+    pub fn remove_from_whitelist(ctx: Context<RemoveFromWhitelist>) -> Result<()> {
+        msg!("Removed {} from whitelist", ctx.accounts.entry.wallet);
+        Ok(())
+    }
+
+    /// Update an existing whitelist entry (refresh expiry, update compliance status).
+    pub fn update_whitelist(
+        ctx: Context<UpdateWhitelist>,
+        params: UpdateWhitelistParams,
+    ) -> Result<()> {
+        let entry = &mut ctx.accounts.entry;
+        let clock = Clock::get()?;
+
+        if let Some(kyc) = params.kyc_compliant { entry.kyc_compliant = kyc; }
+        if let Some(aml) = params.aml_clear { entry.aml_clear = aml; }
+        if let Some(travel) = params.travel_rule_compliant { entry.travel_rule_compliant = travel; }
+        if let Some(days) = params.extend_expiry_days {
+            entry.expiry = clock.unix_timestamp + (days * 86400);
+        }
+
+        msg!("Updated whitelist entry for {}", entry.wallet);
+        Ok(())
+    }
+
+    /// Update global compliance settings (enable/disable transfers, change KYC level).
+    pub fn update_compliance(
+        ctx: Context<UpdateCompliance>,
+        params: UpdateComplianceParams,
+    ) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        if let Some(enabled) = params.allow_transfers { config.allow_transfers = enabled; }
+        if let Some(level) = params.min_kyc_level { config.min_kyc_level = level; }
+        if let Some(oracle) = params.compliance_oracle { config.compliance_oracle = oracle; }
+        msg!("Updated compliance config");
+        Ok(())
+    }
+
+    /// Transfer Hook entry point.
+    /// Called automatically by Token-2022 on every cVAULT-TRADE transfer.
+    /// Validates KYC, AML, Travel Rule, and expiry for both source and destination.
+    pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
+        let config = &ctx.accounts.compliance_config;
+
+        require!(config.allow_transfers, TransferHookError::TransferDisabled);
+
+        let source_owner = ctx.accounts.source_token.owner;
+        let destination_owner = ctx.accounts.destination_token.owner;
+        let mint_key = ctx.accounts.mint.key();
+
+        // Skip compliance for mint authority operations
+        let is_mint_op = source_owner == mint_key;
+        let is_burn_op = destination_owner == mint_key || destination_owner == Pubkey::default();
+
+        if !is_mint_op {
+            match &ctx.accounts.source_whitelist {
+                Some(entry) => validate_whitelist_entry(entry, "source")?,
+                None => {
+                    // Source must be whitelisted to send cVAULT-TRADE
+                    return err!(TransferHookError::NotWhitelisted);
+                }
+            }
+        }
+
+        if !is_burn_op {
+            match &ctx.accounts.destination_whitelist {
+                Some(entry) => validate_whitelist_entry(entry, "destination")?,
+                None => {
+                    // Destination must be whitelisted to receive cVAULT-TRADE
+                    return err!(TransferHookError::NotWhitelisted);
+                }
+            }
+        }
+
+        msg!(
+            "Transfer PASSED: {} cVAULT-TRADE from {} to {}",
+            amount,
+            source_owner,
+            destination_owner
+        );
+        Ok(())
+    }
+
+    /// Fallback required by spl-transfer-hook-interface for CPI compatibility.
+    pub fn fallback<'info>(
+        _program_id: &Pubkey,
+        _accounts: &'info [AccountInfo<'info>],
+        data: &[u8],
+    ) -> Result<()> {
+        // In spl-transfer-hook-interface 0.10.0, the execute discriminator
+        // is the first 8 bytes. We just log and allow — actual enforcement
+        // happens in transfer_hook above.
+        if data.len() >= 8 {
+            msg!("Fallback: transfer hook execute called, {} bytes", data.len());
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+fn validate_whitelist_entry(entry: &WhitelistEntry, role: &str) -> Result<()> {
+    let clock = Clock::get()?;
+    require!(entry.kyc_compliant, TransferHookError::KycNotCompleted);
+    require!(entry.aml_clear, TransferHookError::AmlCheckFailed);
+    require!(entry.travel_rule_compliant, TransferHookError::TravelRuleNotSatisfied);
+    require!(entry.expiry > clock.unix_timestamp, TransferHookError::EntryExpired);
+    msg!("{} wallet {} is compliant (expires {})", role, entry.wallet, entry.expiry);
+    Ok(())
+}
+
+// ============================================================================
+// ACCOUNT STRUCTURES
+// ============================================================================
+
 #[account]
 pub struct WhitelistEntry {
-    pub wallet: Pubkey,
-    pub kyc_compliant: bool,
-    pub aml_clear: bool,
-    pub travel_rule_compliant: bool,
-    pub added_at: i64,
-    pub expiry: i64,
+    pub wallet: Pubkey,              // 32
+    pub kyc_compliant: bool,         // 1
+    pub aml_clear: bool,             // 1
+    pub travel_rule_compliant: bool, // 1
+    pub added_at: i64,               // 8
+    pub expiry: i64,                 // 8
+    pub bump: u8,                    // 1
 }
 
-/// Compliance config - stores compliance oracle and settings
+impl WhitelistEntry {
+    pub const SIZE: usize = 8 + 32 + 1 + 1 + 1 + 8 + 8 + 1; // 60 bytes
+}
+
 #[account]
 pub struct ComplianceConfig {
-    pub authority: Pubkey,
-    pub compliance_oracle: Pubkey,
-    pub min_kyc_level: u8,
-    pub allow_transfers: bool,
+    pub authority: Pubkey,          // 32
+    pub compliance_oracle: Pubkey,  // 32
+    pub min_kyc_level: u8,          // 1
+    pub allow_transfers: bool,      // 1
+    pub bump: u8,                   // 1
 }
 
-/// Initialize compliance configuration
+impl ComplianceConfig {
+    pub const SIZE: usize = 8 + 32 + 32 + 1 + 1 + 1; // 75 bytes
+}
+
+// ============================================================================
+// INSTRUCTION CONTEXTS
+// ============================================================================
+
 #[derive(Accounts)]
 pub struct InitializeCompliance<'info> {
-    #[account(init, payer = payer, space = 8 + 64, seeds = [COMPLIANCE_SEED], bump)]
+    #[account(
+        init,
+        payer = payer,
+        space = ComplianceConfig::SIZE,
+        seeds = [COMPLIANCE_SEED],
+        bump
+    )]
     pub config: Account<'info, ComplianceConfig>,
+
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
-/// Add a wallet to the whitelist
 #[derive(Accounts)]
-pub struct AddToWhitelist<'info> {
-    #[account(mut, seeds = [COMPLIANCE_SEED], bump)]
-    pub config: Account<'info, ComplianceConfig>,
-    #[account(init, payer = payer, space = 8 + 80, seeds = [WHITELIST_SEED, wallet.key().as_ref()], bump)]
-    pub entry: Account<'info, WhitelistEntry>,
-    pub wallet: UncheckedAccount<'info>,
+pub struct InitializeExtraAccountMetas<'info> {
+    /// The extra account metas PDA — stores the list of accounts the hook needs.
+    /// Space is calculated dynamically based on number of extra accounts (3).
+    /// ExtraAccountMetaList::size_of(3) = 8 (discriminator) + 3 * 35 (each meta) = 113 bytes
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + 3 * 35 + 8, // discriminator + 3 ExtraAccountMeta entries + buffer
+        seeds = [EXTRA_ACCOUNT_METAS_SEED, mint.key().as_ref()],
+        bump
+    )]
+    pub extra_account_metas: Account<'info, ExtraAccountMetasAccount>,
+
+    /// The cVAULT-TRADE mint this hook is registered for
+    /// CHECK: Any mint can be passed — validated by Token-2022 at transfer time
+    pub mint: AccountInfo<'info>,
+
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct AddToWhitelist<'info> {
+    #[account(
+        seeds = [COMPLIANCE_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Account<'info, ComplianceConfig>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = WhitelistEntry::SIZE,
+        seeds = [WHITELIST_SEED, wallet.key().as_ref()],
+        bump
+    )]
+    pub entry: Account<'info, WhitelistEntry>,
+
+    /// CHECK: The wallet address to whitelist
+    pub wallet: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RemoveFromWhitelist<'info> {
+    #[account(
+        seeds = [COMPLIANCE_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Account<'info, ComplianceConfig>,
+
+    #[account(
+        mut,
+        close = authority,
+        seeds = [WHITELIST_SEED, wallet.key().as_ref()],
+        bump = entry.bump
+    )]
+    pub entry: Account<'info, WhitelistEntry>,
+
+    /// CHECK: The wallet address to remove
+    pub wallet: AccountInfo<'info>,
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateWhitelist<'info> {
+    #[account(
+        seeds = [COMPLIANCE_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Account<'info, ComplianceConfig>,
+
+    #[account(
+        mut,
+        seeds = [WHITELIST_SEED, entry.wallet.as_ref()],
+        bump = entry.bump
+    )]
+    pub entry: Account<'info, WhitelistEntry>,
+
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateCompliance<'info> {
+    #[account(
+        mut,
+        seeds = [COMPLIANCE_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Account<'info, ComplianceConfig>,
+
+    pub authority: Signer<'info>,
+}
+
+/// Transfer Hook context — called by Token-2022 on every cVAULT-TRADE transfer.
+/// Account order must match Token-2022's expected layout exactly:
+///   0: source token account
+///   1: mint
+///   2: destination token account
+///   3: owner (source authority)
+///   4: extra_account_metas PDA
+/// Then our extra accounts (registered in initialize_extra_account_metas):
+///   5: compliance_config PDA
+///   6: source_whitelist PDA (optional)
+///   7: destination_whitelist PDA (optional)
+#[derive(Accounts)]
+pub struct TransferHook<'info> {
+    /// [0] Source token account
+    pub source_token: InterfaceAccount<'info, TokenAccount>,
+
+    /// [1] The cVAULT-TRADE mint
+    /// CHECK: Validated by Token-2022
+    pub mint: AccountInfo<'info>,
+
+    /// [2] Destination token account
+    pub destination_token: InterfaceAccount<'info, TokenAccount>,
+
+    /// [3] Owner/authority of the source account
+    /// CHECK: Validated by Token-2022
+    pub owner: AccountInfo<'info>,
+
+    /// [4] Extra account metas PDA
+    /// CHECK: Validated by Token-2022 against the registered PDA
+    #[account(
+        seeds = [EXTRA_ACCOUNT_METAS_SEED, mint.key().as_ref()],
+        bump
+    )]
+    pub extra_account_metas: AccountInfo<'info>,
+
+    /// [5] Compliance config (registered as extra account [0])
+    #[account(seeds = [COMPLIANCE_SEED], bump = compliance_config.bump)]
+    pub compliance_config: Account<'info, ComplianceConfig>,
+
+    /// [6] Source wallet whitelist entry (registered as extra account [1], optional)
+    #[account(
+        seeds = [WHITELIST_SEED, source_token.owner.as_ref()],
+        bump
+    )]
+    pub source_whitelist: Option<Account<'info, WhitelistEntry>>,
+
+    /// [7] Destination wallet whitelist entry (registered as extra account [2], optional)
+    #[account(
+        seeds = [WHITELIST_SEED, destination_token.owner.as_ref()],
+        bump
+    )]
+    pub destination_whitelist: Option<Account<'info, WhitelistEntry>>,
+}
+
+// Anchor account wrapper for the raw extra account metas data
+#[account]
+pub struct ExtraAccountMetasAccount {}
+
+// ============================================================================
+// INSTRUCTION PARAMETERS
+// ============================================================================
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct InitializeComplianceParams {
+    pub authority: Pubkey,
+    pub compliance_oracle: Pubkey,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -65,157 +472,12 @@ pub struct AddWhitelistParams {
     pub expiry_days: i64,
 }
 
-/// Remove a wallet from the whitelist
-#[derive(Accounts)]
-pub struct RemoveFromWhitelist<'info> {
-    #[account(mut, seeds = [COMPLIANCE_SEED], bump)]
-    pub config: Account<'info, ComplianceConfig>,
-    #[account(mut, seeds = [WHITELIST_SEED, wallet.key().as_ref()], bump)]
-    pub entry: Account<'info, WhitelistEntry>,
-    pub wallet: UncheckedAccount<'info>,
-    pub authority: Signer<'info>,
-}
-
-/// Transfer hook - called on every token transfer
-/// This is the entry point for Token-2022 transfer hook extension
-#[derive(Accounts)]
-pub struct TransferHook<'info> {
-    /// The token mint (cVAULT-TRADE)
-    pub mint: UncheckedAccount<'info>,
-    /// Source token account
-    #[account(token::mint = mint, token::authority = authority)]
-    pub source: Account<'info, TokenAccount>,
-    /// Destination token account
-    #[account(token::mint = mint, token::authority = authority)]
-    pub destination: Account<'info, TokenAccount>,
-    /// Authority that signed the transfer (could be source owner or delegate)
-    pub authority: Signer<'info>,
-    /// Compliance configuration account
-    #[account(seeds = [COMPLIANCE_SEED], bump)]
-    pub config: Account<'info, ComplianceConfig>,
-}
-
 #[derive(AnchorSerialize, AnchorDeserialize)]
-pub struct TransferHookParams {
-    pub amount: u64,
-}
-
-#[error_code]
-pub enum TransferHookError {
-    #[msg("Wallet not whitelisted")]
-    NotWhitelisted,
-    #[msg("KYC requirement not completed")]
-    KycNotCompleted,
-    #[msg("AML check failed")]
-    AmlCheckFailed,
-    #[msg("Travel Rule not satisfied")]
-    TravelRuleNotSatisfied,
-    #[msg("Whitelist entry has expired")]
-    EntryExpired,
-    #[msg("Transfers are currently disabled")]
-    TransferDisabled,
-}
-
-/// Initialize compliance config
-pub fn initialize_compliance(ctx: Context<InitializeCompliance>, params: InitializeComplianceParams) -> Result<()> {
-    ctx.accounts.config.authority = params.authority;
-    ctx.accounts.config.compliance_oracle = params.compliance_oracle;
-    ctx.accounts.config.min_kyc_level = 1;
-    ctx.accounts.config.allow_transfers = true;
-    msg!("Compliance config initialized");
-    Ok(())
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize)]
-pub struct InitializeComplianceParams {
-    pub authority: Pubkey,
-    pub compliance_oracle: Pubkey,
-}
-
-/// Add wallet to whitelist
-pub fn add_to_whitelist(ctx: Context<AddToWhitelist>, params: AddWhitelistParams) -> Result<()> {
-    let clock = Clock::get()?;
-    ctx.accounts.entry.wallet = ctx.accounts.wallet.key();
-    ctx.accounts.entry.kyc_compliant = params.kyc_compliant;
-    ctx.accounts.entry.aml_clear = params.aml_clear;
-    ctx.accounts.entry.travel_rule_compliant = params.travel_rule_compliant;
-    ctx.accounts.entry.added_at = clock.unix_timestamp;
-    ctx.accounts.entry.expiry = clock.unix_timestamp + (params.expiry_days * 86400);
-    msg!("Added {} to whitelist", ctx.accounts.entry.wallet);
-    Ok(())
-}
-
-/// Remove wallet from whitelist
-pub fn remove_from_whitelist(ctx: Context<RemoveFromWhitelist>) -> Result<()> {
-    ctx.accounts.entry.close(ctx.accounts.authority.to_account_info())?;
-    msg!("Removed {} from whitelist", ctx.accounts.entry.wallet);
-    Ok(())
-}
-
-/// Execute transfer hook - validates compliance on every transfer
-pub fn execute_transfer_hook(ctx: Context<TransferHook>, _params: TransferHookParams) -> Result<()> {
-    require!(ctx.accounts.config.allow_transfers, TransferHookError::TransferDisabled);
-    
-    let source_address = ctx.accounts.source.owner;
-    let dest_address = ctx.accounts.destination.owner;
-    
-    // Get current time for expiry check
-    let clock = Clock::get()?;
-    
-    // Skip compliance check for minting (source is mint) or burning (destination is mint/zero)
-    let is_mint = source_address == ctx.accounts.mint.key();
-    let is_burn = dest_address == ctx.accounts.mint.key() || dest_address == Pubkey::default();
-    
-    // Get the program ID for PDA derivation
-    let program_id = ctx.accounts.config.to_account_info().owner;
-    
-    // Derive whitelist PDA for destination
-    let (dest_whitelist_key, _) = Pubkey::find_program_address(
-        &[WHITELIST_SEED, dest_address.as_ref()],
-        program_id,
-    );
-    
-    // Validate destination compliance (always required except for burn)
-    if !is_burn {
-        if let Ok(entry) = Account::<WhitelistEntry>::try_from(&dest_whitelist_key.to_account_info()) {
-            require!(entry.kyc_compliant, TransferHookError::KycNotCompleted);
-            require!(entry.aml_clear, TransferHookError::AmlCheckFailed);
-            require!(entry.travel_rule_compliant, TransferHookError::TravelRuleNotSatisfied);
-            require!(entry.expiry > clock.unix_timestamp, TransferHookError::EntryExpired);
-            msg!("Destination {} is compliant", dest_address);
-        } else {
-            // No whitelist entry found - reject transfer to non-whitelisted destination
-            return err!(TransferHookError::NotWhitelisted);
-        }
-    }
-    
-    // For source, we allow transfers if whitelisted OR if it's a mint operation
-    if !is_mint {
-        let (source_whitelist_key, _) = Pubkey::find_program_address(
-            &[WHITELIST_SEED, source_address.as_ref()],
-            program_id,
-        );
-        if let Ok(entry) = Account::<WhitelistEntry>::try_from(&source_whitelist_key.to_account_info()) {
-            require!(entry.kyc_compliant, TransferHookError::KycNotCompleted);
-            require!(entry.aml_clear, TransferHookError::AmlCheckFailed);
-            require!(entry.expiry > clock.unix_timestamp, TransferHookError::EntryExpired);
-            msg!("Source {} is compliant", source_address);
-        }
-        // Note: We don't reject if source is not whitelisted - they are sending tokens they already have
-        // The key compliance point is destination must be whitelisted to receive
-    }
-    
-    msg!("Transfer compliance check passed: {} -> {}", source_address, dest_address);
-    
-    Ok(())
-}
-
-/// Update compliance settings
-#[derive(Accounts)]
-pub struct UpdateCompliance<'info> {
-    #[account(mut, seeds = [COMPLIANCE_SEED], bump)]
-    pub config: Account<'info, ComplianceConfig>,
-    pub authority: Signer<'info>,
+pub struct UpdateWhitelistParams {
+    pub kyc_compliant: Option<bool>,
+    pub aml_clear: Option<bool>,
+    pub travel_rule_compliant: Option<bool>,
+    pub extend_expiry_days: Option<i64>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -225,16 +487,24 @@ pub struct UpdateComplianceParams {
     pub compliance_oracle: Option<Pubkey>,
 }
 
-pub fn update_compliance(ctx: Context<UpdateCompliance>, params: UpdateComplianceParams) -> Result<()> {
-    if let Some(enabled) = params.allow_transfers {
-        ctx.accounts.config.allow_transfers = enabled;
-    }
-    if let Some(level) = params.min_kyc_level {
-        ctx.accounts.config.min_kyc_level = level;
-    }
-    if let Some(oracle) = params.compliance_oracle {
-        ctx.accounts.config.compliance_oracle = oracle;
-    }
-    msg!("Updated compliance config");
-    Ok(())
+// ============================================================================
+// ERROR CODES
+// ============================================================================
+
+#[error_code]
+pub enum TransferHookError {
+    #[msg("Wallet is not whitelisted for cVAULT-TRADE transfers")]
+    NotWhitelisted,
+    #[msg("KYC requirement not completed")]
+    KycNotCompleted,
+    #[msg("AML check failed")]
+    AmlCheckFailed,
+    #[msg("Travel Rule not satisfied")]
+    TravelRuleNotSatisfied,
+    #[msg("Whitelist entry has expired — re-verification required")]
+    EntryExpired,
+    #[msg("Transfers are currently disabled by compliance authority")]
+    TransferDisabled,
+    #[msg("Unauthorized")]
+    Unauthorized,
 }

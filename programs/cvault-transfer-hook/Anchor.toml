@@ -1,4 +1,5 @@
 [toolchain]
+anchor_version = "0.32.1"
 package_manager = "yarn"
 
 [features]
@@ -6,20 +7,20 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-cvault-transfer-hook = "Cvau1tT3xGK9XQDqVjG1qGjvMaVQDqVjG1qGjvMaVQD"
+cvault-transfer-hook = "3K8V8s8gQtvJVZxW8Z9DvLU4MgginGBx5Yvptb7o6dmT"
 
 [programs.devnet]
-cvault-transfer-hook = "Cvau1tT3xGK9XQDqVjG1qGjvMaVQDqVjG1qGjvMaVQD"
+cvault-transfer-hook = "3K8V8s8gQtvJVZxW8Z9DvLU4MgginGBx5Yvptb7o6dmT"
 
 [programs.testnet]
-cvault-transfer-hook = "Cvau1tT3xGK9XQDqVjG1qGjvMaVQDqVjG1qGjvMaVQD"
+cvault-transfer-hook = "3K8V8s8gQtvJVZxW8Z9DvLU4MgginGBx5Yvptb7o6dmT"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
 cluster = "devnet"
-wallet = "~/.config/solana/id.json"
+wallet = "C:/solana-wallet/id.json"
 
 [profile.release]
 overflow-checks = true

@@ -1,379 +1,349 @@
-# Oragami Protocol - Implementation Analysis & Demo Guide
+# Oragami Protocol - Devnet Demo Guide
 
-> **Demo Deadline: ~12 hours**  
-> Last Updated: 2026-03-26
-
----
-
-## Executive Summary
-
-The Oragami protocol is a **real-world asset (RWA) vault system** on Solana that enables:
-1. **Depositing** USDC/USDT → receiving cVAULT tokens (1:1 backing)
-2. **Converting** cVAULT → cVAULT-TRADE (tradable on secondary markets)
-3. **Compliance** - Transfer hook validates KYC/AML before any transfer
-
-### Components Built
-
-| Component | Status | Purpose |
-|-----------|--------|---------|
-| `oragami-vault` | ✅ Complete | Core vault logic (deposit, redeem, convert) |
-| `cvault-transfer-hook` | ✅ Fixed | Compliance enforcement on transfers |
-| `relayer-frontend` | ✅ Complete | TypeScript client services |
-| `compliance-relayer` | ✅ Complete | Backend compliance service (Rust) |
+> **Target: Solana Devnet Demo**
+> Last Updated: 2026-03-28
 
 ---
 
-## Architecture Overview
+## Project Structure (After Cleanup)
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              USER FLOW                                       │
-│                                                                              │
-│  User (KYC'd) ──► Deposit USDC ──► Mint cVAULT ──► Convert ──► cVAULT-TRADE│
-│                                    │                   │                      │
-│                                    ▼                   ▼                      │
-│                           ┌────────────────┐    ┌────────────────┐          │
-│                           │ oragami-vault  │    │ cvault-transfer│          │
-│                           │   (Program)    │    │     -hook      │          │
-│                           └────────────────┘    └────────────────┘          │
-│                                    │                   │                      │
-│                                    ▼                   ▼                      │
-│                           ┌─────────────────────────────────────────┐       │
-│                           │        Solana Blockchain                │       │
-│                           └─────────────────────────────────────────┘       │
-│                                        │                                      │
-│                                        ▼                                      │
-│                           ┌─────────────────────────────────────────┐       │
-│                           │      compliance-relayer (Backend)       │       │
-│                           │  • Rate limiting                       │       │
-│                           │  • Risk scoring                        │       │
-│                           │  • KYC/AML validation                  │       │
-│                           └─────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────────────┘
+Oragami/
+├── backend/
+│   └── compliance-relayer/     # Rust compliance backend
+├── frontend/
+│   └── relayer-frontend/       # Next.js frontend
+├── oragami-vault/              # Core vault Solana program
+├── programs/
+│   └── cvault-transfer-hook/   # Compliance transfer hook
+├── SPEC.md                     # Technical specification
+└── DEMO_GUIDE.md              # This file
 ```
 
 ---
 
-## Implementation Details
+## Prerequisites
 
-### 1. oragami-vault Program
-
-**Location**: `oragami-vault/programs/oragami-vault/src/lib.rs`
-
-#### Key Instructions
-
-```rust
-// Initialize vault with configuration
-initializeVault({
-  treasury: Pubkey,        // Where deposits go
-  authority: Pubkey,      // Admin key
-  minDeposit: u64,         // Minimum deposit (e.g., 1 USDC)
-  maxDeposit: u64,         // Maximum deposit
-  usxAllocationBps: u16,  // % to Solstice yield (basis points)
-  cvaultTradeMint: Pubkey, // Mint for tradable version
-  secondaryMarketEnabled: bool
-})
-
-// Deposit USDC → Receive cVAULT (1:1)
-deposit({ amount: u64, nonce: String })
-
-// Burn cVAULT → Get USDC back
-redeem({ cvaultAmount: u64, nonce: String })
-
-// Convert cVAULT → cVAULT-TRADE (for secondary market)
-convertToTradeable({ amount: u64 })
-
-// Convert cVAULT-TRADE → cVAULT or underlying RWAs
-redeemTradeable({ amount: u64, redeemToCvault: bool })
-
-// Claim yield from Solstice
-claimYield({ amount: u64 })
-
-// Admin controls
-setPause({ paused: bool })
-updateConfig({ /* config params */ })
-```
-
-#### Account Structure
-
-```rust
-#[account]
-pub struct VaultState {
-    pub bump: u8,
-    pub cvault_mint: Pubkey,         // cVAULT token mint
-    pub cvault_trade_mint: Pubkey,   // cVAULT-TRADE mint (transfer hook)
-    pub vault_token_account: Pubkey, // Vault's token account
-    pub treasury: Pubkey,            // Deposit destination
-    pub authority: Pubkey,           // Admin
-    pub min_deposit: u64,
-    pub max_deposit: u64,
-    pub usx_allocation_bps: u16,
-    pub paused: bool,
-    pub total_deposits: u64,
-    pub total_supply: u64,
-    pub last_yield_claim: i64,
-    pub secondary_market_enabled: bool,
-}
-```
-
----
-
-### 2. cvault-transfer-hook (Compliance)
-
-**Location**: `programs/cvault-transfer-hook/programs/cvault-transfer-hook/src/lib.rs`
-
-#### Fixed Implementation
-
-The transfer hook now properly validates compliance:
-
-```rust
-pub fn execute_transfer_hook(ctx: Context<TransferHook>, params: TransferHookParams) -> Result<()> {
-    // 1. Check global transfer setting
-    require!(ctx.accounts.config.allow_transfers, TransferHookError::TransferDisabled);
-    
-    // 2. Determine if this is mint or burn (skip compliance for minting)
-    let is_mint = source_address == ctx.accounts.mint.key();
-    let is_burn = dest_address == ctx.accounts.mint.key() || dest_address == Pubkey::default();
-    
-    // 3. Validate destination is whitelisted (except for burns)
-    if !is_burn {
-        if let Some(ref entry) = ctx.accounts.dest_whitelist {
-            require!(entry.kyc_compliant, TransferHookError::KycNotCompleted);
-            require!(entry.aml_clear, TransferHookError::AmlCheckFailed);
-            require!(entry.travel_rule_compliant, TransferHookError::TravelRuleNotSatisfied);
-            require!(entry.expiry > clock.unix_timestamp, TransferHookError::EntryExpired);
-        } else {
-            return err!(TransferHookError::NotWhitelisted);
-        }
-    }
-    
-    // 4. Validate source compliance (if not minting)
-    // ... (similar logic)
-    
-    Ok(())
-}
-```
-
-#### Key Accounts
-
-```rust
-#[account]
-pub struct WhitelistEntry {
-    pub wallet: Pubkey,
-    pub kyc_compliant: bool,
-    pub aml_clear: bool,
-    pub travel_rule_compliant: bool,
-    pub added_at: i64,
-    pub expiry: i64,
-}
-
-#[account]
-pub struct ComplianceConfig {
-    pub authority: Pubkey,
-    pub compliance_oracle: Pubkey,
-    pub min_kyc_level: u8,
-    pub allow_transfers: bool,
-}
-```
-
----
-
-### 3. Frontend Services
-
-**Location**: `frontend/relayer-frontend/src/services/`
-
-#### vault-operations.ts
-```typescript
-// Core vault interactions
-export async function depositToVault(
-  amount: number,
-  wallet: Wallet
-): Promise<Transaction>
-
-export async function redeemFromVault(
-  cvaultAmount: number,
-  wallet: Wallet
-): Promise<Transaction>
-
-export async function convertToTradeable(
-  amount: number,
-  wallet: Wallet
-): Promise<Transaction>
-```
-
-#### transfer-hook-client.ts
-```typescript
-// Compliance management
-export async function addToWhitelist(
-  wallet: Pubkey,
-  kycCompliant: boolean,
-  amlClear: boolean,
-  travelRuleCompliant: boolean,
-  authority: Wallet
-): Promise<Transaction>
-
-export async function removeFromWhitelist(
-  wallet: Pubkey,
-  authority: Wallet
-): Promise<Transaction>
-```
-
----
-
-### 4. Backend (compliance-relayer)
-
-**Location**: `backend/compliance-relayer/`
-
-#### Features
-- **Rate Limiting**: Per-wallet, per-IP rate limits
-- **Risk Scoring**: Integration with Range Protocol
-- **KYC/AML**: Blocklist checking, risk profiles
-- **Privacy**: Confidential transfers support
-
-#### Key Files
-```
-src/
-├── main.rs              # Entry point
-├── api/router.rs        # REST API endpoints
-├── app/service.rs       # Business logic
-├── app/worker.rs        # Background processing
-├── infra/blockchain/    # Solana RPC clients
-└── infra/compliance/    # Compliance rules
-```
-
----
-
-## Demo Setup Instructions
-
-### Prerequisites
+### 1. Install Solana CLI
 
 ```bash
-# Install Solana CLI (v3.1.9)
-sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.9/install)"
+# Install Solana CLI (v2.1+)
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
 
-# Set PATH
+# Add to PATH
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
 
 # Verify
 solana --version
 ```
 
-### Step 1: Build the Program
+### 2. Install Anchor CLI
 
 ```bash
+# Install Anchor
+cargo install --git https://github.com/coral-xyz/anchor avm --force
+avm install 0.30.1
+avm use 0.30.1
+
+# Verify
+anchor --version
+```
+
+### 3. Install Node.js & pnpm
+
+```bash
+# Node.js 20+
+# Install via nvm or download from nodejs.org
+
+# Install pnpm
+npm install -g pnpm
+```
+
+---
+
+## Devnet Setup
+
+### Step 1: Configure Solana for Devnet
+
+```bash
+# Switch to devnet
+solana config set --url devnet
+
+# Create/use wallet
+solana-keygen new --no-passphrase -o ~/.config/solana/id.json
+# OR use existing: solana config set --keypair ~/.config/solana/id.json
+
+# Get devnet SOL (airdrop)
+solana airdrop 5
+
+# Verify balance
+solana balance
+```
+
+### Step 2: Build Programs
+
+```bash
+# Build vault program
 cd oragami-vault
+anchor build
 
-# Clean previous builds
-rm -rf target/deploy/*.so target/idl
-
-# Build
+# Build transfer hook program
+cd ../programs/cvault-transfer-hook
 anchor build
 ```
 
-### Step 2: Start Local Validator
+### Step 3: Deploy to Devnet
 
 ```bash
-# Create test wallet (if not exists)
-solana-keygen new --no-passphrase -o ~/.config/solana/id.json
-
-# Start validator
-solana-test-validator --mint YOUR_WALLET_PUBKEY &
-```
-
-### Step 3: Configure Anchor
-
-Update `Anchor.toml`:
-```toml
-[provider]
-cluster = "localnet"
-wallet = "~/.config/solana/id.json"
-```
-
-### Step 4: Run Tests
-
-```bash
+# Deploy vault program
 cd oragami-vault
+anchor deploy --provider.cluster devnet
 
-# Run Rust unit tests
-cargo test --features idl-build
+# Note the Program ID output, e.g.:
+# Program Id: <NEW_VAULT_PROGRAM_ID>
 
-# Run Anchor tests (if IDL issue resolved)
-anchor test
+# Deploy transfer hook
+cd ../programs/cvault-transfer-hook
+anchor deploy --provider.cluster devnet
+
+# Note the Program ID output
 ```
 
----
+### Step 4: Update Program IDs
 
-## Demo Script (Rough Timeline)
+After deployment, update these files with the new program IDs:
 
-### Minute 0-2: Show Project Structure
-- Point to `SPEC.md` for requirements
-- Show folder structure
-
-### Minute 2-5: Show Vault Implementation
-- Open `oragami-vault/programs/oragami-vault/src/lib.rs`
-- Walk through: initialize, deposit, redeem, convert
-
-### Minute 5-8: Show Compliance Hook
-- Open `cvault-transfer-hook/.../src/lib.rs`
-- Show fixed compliance validation
-- Explain whitelist flow
-
-### Minute 8-10: Show Frontend/Backend
-- `frontend/relayer-frontend/src/services/vault-operations.ts`
-- `backend/compliance-relayer/src/main.rs` (if brief)
-
-### Minute 10-12: Show Working Tests
-- Run `cargo test --features idl-build`
-- Show 3 passing tests
-
----
-
-## Known Issues & Fixes
-
-### ❌ IDL Generation Issue
-
-**Symptom**: `Error: IDL doesn't exist` when running `anchor test`
-
-**Cause**: The `no-idl` feature may be enabled in Cargo.toml
-
-**Fix**:
-```bash
-# Ensure idl-build feature is used
-cargo test --features idl-build
-
-# Or ensure Anchor.toml has proper test config
-[test]
-startup_timeout = 300
-```
-
-### ⚠️ Unused Variable Warnings
-
-Two warnings in vault program:
+**oragami-vault/programs/oragami-vault/src/lib.rs:4**
 ```rust
-// Line 142: vault_state_key unused
-// Line 372: transfer_cpi unused (incomplete yield transfer)
+declare_id!("<NEW_VAULT_PROGRAM_ID>");
 ```
 
-These are minor - program compiles and runs fine.
+**oragami-vault/Anchor.toml**
+```toml
+[programs.devnet]
+oragami_vault = "<NEW_VAULT_PROGRAM_ID>"
+```
+
+**programs/cvault-transfer-hook/programs/cvault-transfer-hook/src/lib.rs:12**
+```rust
+declare_id!("<NEW_HOOK_PROGRAM_ID>");
+```
+
+**programs/cvault-transfer-hook/Anchor.toml**
+```toml
+[programs.devnet]
+cvault-transfer-hook = "<NEW_HOOK_PROGRAM_ID>"
+```
+
+**frontend/relayer-frontend/src/services/transfer-hook-client.ts:11**
+```typescript
+export const TRANSFER_HOOK_PROGRAM_ID = new PublicKey('<NEW_HOOK_PROGRAM_ID>');
+```
+
+### Step 5: Rebuild After ID Update
+
+```bash
+# Rebuild with correct IDs
+cd oragami-vault && anchor build
+cd ../programs/cvault-transfer-hook && anchor build
+
+# Redeploy (same IDs will be used)
+anchor deploy --provider.cluster devnet
+```
 
 ---
 
-## Quick Reference
+## Frontend Setup
+
+```bash
+cd frontend/relayer-frontend
+
+# Install dependencies
+pnpm install
+
+# Create .env.local
+cat > .env.local << EOF
+NEXT_PUBLIC_SOLANA_RPC_URL=https://api.devnet.solana.com
+NEXT_PUBLIC_VAULT_PROGRAM_ID=<NEW_VAULT_PROGRAM_ID>
+NEXT_PUBLIC_TRANSFER_HOOK_PROGRAM_ID=<NEW_HOOK_PROGRAM_ID>
+EOF
+
+# Run development server
+pnpm dev
+```
+
+---
+
+## Backend Setup (Optional for Demo)
+
+The compliance-relayer backend requires PostgreSQL:
+
+```bash
+cd backend/compliance-relayer
+
+# Create .env
+cat > .env << EOF
+DATABASE_URL=postgres://user:pass@localhost:5432/oragami
+SOLANA_RPC_URL=https://api.devnet.solana.com
+RUST_LOG=info
+EOF
+
+# Build and run
+cargo build --release
+./target/release/compliance-relayer
+```
+
+---
+
+## Demo Flow
+
+### 1. Initialize Vault (Admin)
+
+Using Anchor TypeScript client or CLI:
+
+```typescript
+// Initialize vault on devnet
+const tx = await program.methods
+  .initializeVault({
+    treasury: treasuryPubkey,
+    authority: adminPubkey,
+    minDeposit: new BN(1_000_000),  // 1 USDC
+    maxDeposit: new BN(1_000_000_000_000), // 1M USDC
+    usxAllocationBps: 2000,  // 20% to yield
+    cvaultTradeMint: tradeMintPubkey,
+    secondaryMarketEnabled: true,
+  })
+  .accounts({
+    vaultState: vaultStatePda,
+    cvaultMint: cvaultMintPda,
+    tokenAccount: vaultTokenPda,
+    payer: admin.publicKey,
+    systemProgram: SystemProgram.programId,
+    tokenProgram: TOKEN_PROGRAM_ID,
+  })
+  .signers([admin])
+  .rpc();
+```
+
+### 2. Add User to Whitelist (Compliance)
+
+```typescript
+// Add wallet to compliance whitelist
+const tx = await hookProgram.methods
+  .addToWhitelist({
+    kycCompliant: true,
+    amlClear: true,
+    travelRuleCompliant: true,
+    expiryDays: new BN(365),
+  })
+  .accounts({
+    config: complianceConfigPda,
+    entry: whitelistEntryPda,
+    wallet: userWallet,
+    payer: admin.publicKey,
+    systemProgram: SystemProgram.programId,
+  })
+  .signers([admin])
+  .rpc();
+```
+
+### 3. User Deposits USDC
+
+```typescript
+// User deposits 100 USDC
+const tx = await program.methods
+  .deposit({
+    amount: new BN(100_000_000),  // 100 USDC (6 decimals)
+    nonce: uuid(),
+  })
+  .accounts({
+    vaultState: vaultStatePda,
+    cvaultMint: cvaultMintPda,
+    vaultTokenAccount: vaultTokenPda,
+    treasury: treasuryPubkey,
+    payerTokenAccount: userUsdcAccount,
+    depositTokenMint: usdcMint,
+    payer: user.publicKey,
+    tokenProgram: TOKEN_PROGRAM_ID,
+  })
+  .signers([user])
+  .rpc();
+
+// User now has 100 cVAULT tokens
+```
+
+### 4. Convert to Tradeable
+
+```typescript
+// Convert cVAULT to cVAULT-TRADE for secondary market
+const tx = await program.methods
+  .convertToTradeable({ amount: new BN(50_000_000) })
+  .accounts({
+    vaultState: vaultStatePda,
+    cvaultMint: cvaultMintPda,
+    cvaultTradeMint: tradeMintPda,
+    userCvaultAccount: userCvaultAccount,
+    userCvaultTradeAccount: userTradeAccount,
+    authority: user.publicKey,
+    tokenProgram: TOKEN_PROGRAM_ID,
+  })
+  .signers([user])
+  .rpc();
+```
+
+### 5. Transfer (With Compliance Check)
+
+When transferring cVAULT-TRADE, the transfer hook automatically:
+1. Validates sender is KYC/AML compliant
+2. Validates recipient is whitelisted
+3. Checks expiry dates
+4. Logs compliance event
+
+If any check fails, the transfer is rejected on-chain.
+
+---
+
+## Key Demo Points
+
+1. **Institutional-Grade Compliance**: Every transfer validated on-chain
+2. **1:1 Backing**: cVAULT tokens fully backed by deposited assets
+3. **Secondary Market Ready**: cVAULT-TRADE enables compliant trading
+4. **Yield Generation**: USX integration for delta-neutral yield
+5. **Token-2022**: Uses latest Solana token standard with transfer hooks
+
+---
+
+## Useful Commands
 
 | Command | Purpose |
 |---------|---------|
+| `solana config get` | Show current config |
+| `solana balance` | Check wallet balance |
+| `solana airdrop 5` | Get devnet SOL |
 | `anchor build` | Build programs |
-| `anchor test` | Run TypeScript tests |
-| `cargo test --features idl-build` | Run Rust unit tests |
-| `solana-test-validator` | Start local blockchain |
-| `cargo build --release --features idl-build` | Build with IDL generation |
+| `anchor deploy --provider.cluster devnet` | Deploy to devnet |
+| `anchor test --provider.cluster devnet` | Run tests on devnet |
+| `pnpm dev` | Run frontend |
 
 ---
 
-## Contact / Next Steps
+## Troubleshooting
 
-For demo preparation:
-1. Try building locally first
-2. Run Rust tests: `cargo test --features idl-build`
-3. Attempt Anchor tests: `anchor test`
-4. Check validator is running: `curl http://127.0.0.1:8899/health`
+### "Insufficient funds"
+```bash
+solana airdrop 5  # Get more devnet SOL
+```
+
+### "Program not found"
+- Ensure program is deployed: `solana program show <PROGRAM_ID>`
+- Check cluster: `solana config get`
+
+### "IDL doesn't exist"
+```bash
+anchor build  # Rebuild to generate IDL
+```
+
+### Transfer Hook Fails
+- Check whitelist entry exists for both sender and recipient
+- Verify KYC/AML flags are true
+- Check expiry hasn't passed

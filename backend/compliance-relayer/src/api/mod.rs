@@ -4,6 +4,7 @@ pub mod admin;
 pub mod handlers;
 pub mod router;
 pub mod six;
+pub mod vault;
 
 pub use admin::{
     AddBlocklistRequest, BlocklistEntryResponse, BlocklistResponse, ListBlocklistResponse,

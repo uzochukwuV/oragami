@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Institution {
+  id                  String       @id @default(cuid())
+  walletAddress       String       @unique
+  name                String
+  jurisdiction        String
+  tier                Int
+  kycLevel            Int
+  amlScore            Int
+  credentialPda       String?
+  credentialStatus    String       @default("pending")
+  credentialIssuedAt  DateTime?
+  credentialExpiresAt DateTime?
+  attestationHash     String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  deposits            Deposit[]
+  travelRuleRecords   TravelRule[]
+  auditEvents         AuditEvent[]
+}
+
+model Deposit {
+  id            String      @id @default(cuid())
+  txSignature   String      @unique
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  usdcAmount    BigInt
+  cvaultAmount  BigInt
+  navAtDeposit  BigInt
+  nonce         String      @unique
+  travelRuleId  String?
+  travelRule    TravelRule? @relation(fields: [travelRuleId], references: [id])
+  timestamp     DateTime
+  createdAt     DateTime    @default(now())
+}
+
+model TravelRule {
+  id                String      @id @default(cuid())
+  pda               String      @unique
+  institutionId     String
+  institution       Institution @relation(fields: [institutionId], references: [id])
+  originatorName    String
+  originatorAccount String
+  beneficiaryName   String
+  complianceHash    String
+  nonceHash         String      @unique
+  usdcAmount        BigInt
+  submittedAt       DateTime
+  deposits          Deposit[]
+  createdAt         DateTime    @default(now())
+}
+
+model YieldEvent {
+  id               String   @id @default(cuid())
+  txSignature      String?
+  totalDeposits    BigInt
+  usxAllocationBps Int
+  apyBps           Int
+  daysElapsed      Int
+  yieldAccrued     BigInt
+  navBeforeBps     BigInt
+  navAfterBps      BigInt
+  eusxPrice        Float?
+  timestamp        DateTime
+  createdAt        DateTime @default(now())
+}
+
+model NavSnapshot {
+  id          String   @id @default(cuid())
+  txSignature String?
+  navBps      BigInt
+  source      String
+  rawPayload  Json?
+  timestamp   DateTime
+  createdAt   DateTime @default(now())
+}
+
+model AuditEvent {
+  id            String       @id @default(cuid())
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  actor         String
+  role          String
+  action        String
+  result        String
+  txSignature   String?
+  metadata      Json?
+  timestamp     DateTime     @default(now())
+}

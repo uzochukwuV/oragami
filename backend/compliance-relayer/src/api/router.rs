@@ -40,6 +40,9 @@ use super::six::{
     get_forex_rate, get_precious_metal_price, get_equity_price, calculate_vault_nav,
     health_check as six_health_check, list_instruments,
 };
+use super::vault::{
+    get_commodity_prices, get_price_quote, get_historical_prices, get_vault_tvl, get_vault_status,
+};
 
 /// Rate limiter configuration
 #[derive(Debug, Clone)]
@@ -314,6 +317,14 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/equity/{valor}/{market_bc}", get(get_equity_price))
         .route("/nav", post(calculate_vault_nav));
 
+    // Vault pricing routes
+    let vault_routes = Router::new()
+        .route("/prices", get(get_commodity_prices))
+        .route("/quote/{symbol}", get(get_price_quote))
+        .route("/prices/history", get(get_historical_prices))
+        .route("/tvl", get(get_vault_tvl))
+        .route("/status", get(get_vault_status));
+
     Router::new()
         .nest("/transfer-requests", transfer_routes)
         .nest("/webhooks", webhook_routes)
@@ -321,6 +332,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .nest("/admin", admin_routes)
         .nest("/risk-check", compliance_routes)
         .nest("/six", six_routes)
+        .nest("/api/vault", vault_routes)
         .layer(create_cors_layer())
         .layer(middleware)
         .with_state(app_state)
@@ -404,6 +416,18 @@ pub fn create_router_with_rate_limit(app_state: Arc<AppState>, config: RateLimit
             rate_limit_transfers_middleware,
         ));
 
+    // Vault pricing routes (with rate limiting)
+    let vault_routes = Router::new()
+        .route("/prices", get(get_commodity_prices))
+        .route("/quote/{symbol}", get(get_price_quote))
+        .route("/prices/history", get(get_historical_prices))
+        .route("/tvl", get(get_vault_tvl))
+        .route("/status", get(get_vault_status))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&rate_limit_state),
+            rate_limit_transfers_middleware,
+        ));
+
     Router::new()
         .nest("/transfer-requests", transfer_routes)
         .nest("/webhooks", webhook_routes)
@@ -411,6 +435,7 @@ pub fn create_router_with_rate_limit(app_state: Arc<AppState>, config: RateLimit
         .nest("/admin", admin_routes)
         .nest("/risk-check", compliance_routes)
         .nest("/six", six_routes)
+        .nest("/api/vault", vault_routes)
         .layer(create_cors_layer())
         .layer(middleware)
         .with_state(app_state)

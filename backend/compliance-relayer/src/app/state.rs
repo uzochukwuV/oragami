@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::domain::{BlockchainClient, ComplianceProvider, DatabaseClient};
 use crate::infra::BlocklistManager;
 use crate::infra::privacy::PrivacyHealthCheckService;
+use crate::infra::six::SixApiClient;
 
 use super::risk_service::RiskService;
 use super::service::AppService;
@@ -27,6 +28,8 @@ pub struct AppState {
     pub blocklist: Option<Arc<BlocklistManager>>,
     /// Risk check service for pre-flight compliance screening
     pub risk_service: Option<Arc<RiskService>>,
+    /// SIX Financial Data API client for market data
+    pub six_client: Option<Arc<SixApiClient>>,
 }
 
 impl AppState {
@@ -87,6 +90,7 @@ impl AppState {
             privacy_service: None,
             blocklist: None,
             risk_service: None,
+            six_client: None,
         }
     }
 
@@ -116,6 +120,13 @@ impl AppState {
     #[must_use]
     pub fn with_risk_service(mut self, risk_service: Arc<RiskService>) -> Self {
         self.risk_service = Some(risk_service);
+        self
+    }
+
+    /// Add SIX API client to the application state (builder pattern)
+    #[must_use]
+    pub fn with_six_client(mut self, six_client: Arc<SixApiClient>) -> Self {
+        self.six_client = Some(six_client);
         self
     }
 }

@@ -2,36 +2,70 @@
 
 import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Scan, Zap, Loader2, Check, AlertCircle } from 'lucide-react';
+import { X, Scan, Shield, TrendingUp, ArrowLeftRight } from 'lucide-react';
 
 import { SystemHealthBar } from '@/components/shared/SystemHealthBar';
 import { Footer } from '@/components/shared/Footer';
 import { AdminOverlay } from '@/components/dashboard/AdminOverlay';
 import { AnalyticsOverview } from '@/widgets/AnalyticsOverview';
 import { MetricsRow } from '@/widgets/MetricsRow';
-import { Terminal } from '@/features/terminal';
 import { Monitor } from '@/features/monitor';
 import { RiskScanner } from '@/features/risk-scanner';
+import { VaultStatsBar } from '@/features/vault/VaultStatsBar';
+import { VaultPanel } from '@/features/vault/VaultPanel';
+import { useVaultState } from '@/features/vault/useVaultState';
 import { useDashboardAnalytics } from '@/hooks';
-import { generateKeypair, generatePublicTransfer, generateRandomAddress } from '@/lib/wasm';
-import { API_BASE_URL } from '@/lib/constants';
-import { v7 as uuidv7 } from 'uuid';
 
 // ============================================================================
-// Risk Scanner Overlay Component
+// Hero Strip — explains the product in 3 bullets
 // ============================================================================
 
-interface RiskScannerOverlayProps {
-  isOpen: boolean;
-  onClose: () => void;
+function HeroStrip() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="w-full rounded-xl border border-primary/20 bg-primary/5 px-6 py-5"
+    >
+      <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-8">
+        <div className="flex-1">
+          <h1 className="text-xl font-bold text-foreground leading-tight">
+            Institutional RWA Vault on Solana
+          </h1>
+          <p className="text-sm text-muted mt-1">
+            Deposit USDC. Mint cVAULT backed by Gold + CHF + Solstice USX yield.
+            Every transfer enforced on-chain by KYC/AML compliance hooks.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-6 shrink-0">
+          <Bullet icon={<Shield className="h-4 w-4 text-primary" />} label="KYC / AML / Travel Rule" />
+          <Bullet icon={<TrendingUp className="h-4 w-4 text-status-confirmed" />} label="5% APY via Solstice USX" />
+          <Bullet icon={<ArrowLeftRight className="h-4 w-4 text-status-pending" />} label="Permissioned Secondary Market" />
+        </div>
+      </div>
+    </motion.div>
+  );
 }
 
-function RiskScannerOverlay({ isOpen, onClose }: RiskScannerOverlayProps) {
+function Bullet({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      {icon}
+      <span className="text-xs font-medium text-muted">{label}</span>
+    </div>
+  );
+}
+
+// ============================================================================
+// Risk Scanner Overlay
+// ============================================================================
+
+function RiskScannerOverlay({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   return (
     <AnimatePresence>
       {isOpen && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -39,8 +73,6 @@ function RiskScannerOverlay({ isOpen, onClose }: RiskScannerOverlayProps) {
             onClick={onClose}
             className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40"
           />
-          
-          {/* Panel */}
           <motion.div
             initial={{ opacity: 0, x: 50 }}
             animate={{ opacity: 1, x: 0 }}
@@ -50,14 +82,12 @@ function RiskScannerOverlay({ isOpen, onClose }: RiskScannerOverlayProps) {
           >
             <div className="min-h-full p-4 pt-14">
               <div className="relative">
-                {/* Close Button */}
                 <button
                   onClick={onClose}
                   className="absolute -top-10 right-0 p-2 rounded-lg bg-panel border border-border hover:bg-panel-hover transition-colors"
                 >
                   <X className="h-4 w-4 text-muted" />
                 </button>
-                
                 <RiskScanner />
               </div>
             </div>
@@ -69,119 +99,17 @@ function RiskScannerOverlay({ isOpen, onClose }: RiskScannerOverlayProps) {
 }
 
 // ============================================================================
-// Risk Scanner Toggle Button
-// ============================================================================
-
-interface ScannerToggleProps {
-  onClick: () => void;
-}
-
-function ScannerToggle({ onClick }: ScannerToggleProps) {
-  return (
-    <motion.button
-      onClick={onClick}
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-colors"
-    >
-      <Scan className="h-4 w-4" />
-      <span className="text-sm font-medium">Risk Scanner</span>
-    </motion.button>
-  );
-}
-
-// ============================================================================
-// Generate Public Toggle Button
-// ============================================================================
-
-type ToastState = {
-  type: 'success' | 'error' | 'idle';
-  message: string;
-};
-
-interface GeneratePublicToggleProps {
-  isGenerating: boolean;
-  toast: ToastState;
-  onClick: () => void;
-}
-
-function GeneratePublicToggle({ isGenerating, toast, onClick }: GeneratePublicToggleProps) {
-  return (
-    <div className="flex items-center gap-2">
-      <motion.button
-        onClick={onClick}
-        disabled={isGenerating}
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isGenerating ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Zap className="h-4 w-4" />
-        )}
-        <span className="text-sm font-medium">
-          {isGenerating ? 'Generating...' : 'Generate Public'}
-        </span>
-      </motion.button>
-
-      {/* Toast notification */}
-      <AnimatePresence>
-        {toast.type !== 'idle' && (
-          <motion.div
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -10 }}
-            className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg ${
-              toast.type === 'success'
-                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                : 'bg-red-500/10 text-red-400 border border-red-500/20'
-            }`}
-          >
-            {toast.type === 'success' ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <AlertCircle className="h-4 w-4" />
-            )}
-            {toast.message}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// ============================================================================
-// Section Header Component
-// ============================================================================
-
-interface SectionHeaderProps {
-  title: string;
-  children?: React.ReactNode;
-}
-
-function SectionHeader({ title, children }: SectionHeaderProps) {
-  return (
-    <div className="flex items-center justify-between mb-4">
-      <h2 className="text-xs font-semibold text-muted uppercase tracking-widest">
-        {title}
-      </h2>
-      {children}
-    </div>
-  );
-}
-
-// ============================================================================
-// Main Page Component
+// Main Page
 // ============================================================================
 
 export default function HomePage() {
   const [isRiskScannerOpen, setIsRiskScannerOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [toast, setToast] = useState<ToastState>({ type: 'idle', message: '' });
 
-  // Unified data hook - fetch once at page level
+  // Vault state — polls every 15s
+  const { stats, basket, isLoading: vaultLoading, refresh: refreshVault } = useVaultState();
+
+  // Analytics — polls every 10s
   const {
     volumeTimeSeries,
     dailyTransactionCounts,
@@ -190,91 +118,54 @@ export default function HomePage() {
     totalTransfers,
     avgLatencySeconds,
     complianceBreakdown,
-    isLoading,
+    isLoading: analyticsLoading,
   } = useDashboardAnalytics();
 
-  const openRiskScanner = useCallback(() => {
-    setIsRiskScannerOpen(true);
-  }, []);
-
-  const closeRiskScanner = useCallback(() => {
-    setIsRiskScannerOpen(false);
-  }, []);
-
-  const openAdmin = useCallback(() => {
-    setIsAdminOpen(true);
-  }, []);
-
-  const closeAdmin = useCallback(() => {
-    setIsAdminOpen(false);
-  }, []);
-
-  const handleGeneratePublic = useCallback(async () => {
-    setIsGenerating(true);
-    setToast({ type: 'idle', message: '' });
-
-    try {
-      // 1. Generate a new keypair
-      const keypair = await generateKeypair();
-
-      // 2. Generate a random destination address
-      const toAddress = await generateRandomAddress();
-
-      // 3. Generate nonce for v2 API (replay protection / idempotency)
-      const nonce = uuidv7();
-
-      // 4. Generate the signed transfer request (1 SOL = 1e9 lamports)
-      const transferResult = await generatePublicTransfer(
-        keypair.secret_key,
-        toAddress,
-        1_000_000_000, // 1 SOL
-        undefined, // Native SOL, no token mint
-        nonce
-      );
-
-      // 5. Submit to the API (Idempotency-Key must match nonce)
-      const response = await fetch(`${API_BASE_URL}/transfer-requests`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': nonce,
-        },
-        body: transferResult.request_json,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
-        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-      }
-
-      setToast({ type: 'success', message: 'Transfer submitted!' });
-
-      // Clear toast after 3 seconds
-      setTimeout(() => setToast({ type: 'idle', message: '' }), 3000);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setToast({ type: 'error', message });
-
-      // Clear error toast after 5 seconds
-      setTimeout(() => setToast({ type: 'idle', message: '' }), 5000);
-    } finally {
-      setIsGenerating(false);
-    }
-  }, []);
+  const openAdmin = useCallback(() => setIsAdminOpen(true), []);
+  const closeAdmin = useCallback(() => setIsAdminOpen(false), []);
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Sticky System Health Header */}
       <SystemHealthBar onAdminClick={openAdmin} />
 
-      <main className="flex-1 container mx-auto px-4 py-6 space-y-6">
-        {/* ============================================================== */}
-        {/* Section 1: Analytics Hero */}
-        {/* ============================================================== */}
-        <section>
-          <SectionHeader title="Analytics Overview" />
-          
-          {/* Analytics Charts (24h Volume, Distribution, Risk Gauge) */}
+      <main className="flex-1 container mx-auto px-4 py-6 space-y-5">
+
+        {/* 1. Hero — what is Oragami */}
+        <HeroStrip />
+
+        {/* 2. Live vault stats — NAV, TVL, basket */}
+        <VaultStatsBar
+          stats={stats}
+          basket={basket}
+          isLoading={vaultLoading}
+          onRefresh={refreshVault}
+        />
+
+        {/* 3. Vault operations + transaction monitor */}
+        <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5">
+          <VaultPanel stats={stats} onVaultUpdate={refreshVault} />
+          <Monitor />
+        </div>
+
+        {/* 4. Risk scanner button */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsRiskScannerOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-colors text-sm font-medium"
+          >
+            <Scan className="h-4 w-4" />
+            Wallet Risk Scanner
+          </button>
+        </div>
+
+        {/* 5. Analytics — below the fold */}
+        <section className="space-y-5">
+          <div className="flex items-center gap-3">
+            <h2 className="text-xs font-semibold text-muted uppercase tracking-widest">
+              Compliance Analytics
+            </h2>
+            <div className="flex-1 h-px bg-border" />
+          </div>
           <AnalyticsOverview
             volumeTimeSeries={volumeTimeSeries}
             dailyTransactionCounts={dailyTransactionCounts}
@@ -282,61 +173,20 @@ export default function HomePage() {
             recentFlags={recentFlags}
             compact
           />
-        </section>
-
-        {/* Operational Metrics Row */}
-        <section>
           <MetricsRow
             totalTransfers={totalTransfers}
             successRate={successRate}
             avgLatencySeconds={avgLatencySeconds}
             complianceBreakdown={complianceBreakdown}
-            isLoading={isLoading}
+            isLoading={analyticsLoading}
           />
-        </section>
-
-        {/* ============================================================== */}
-        {/* Section 2: Execution & Monitoring */}
-        {/* ============================================================== */}
-        <section>
-          <SectionHeader title="Execution & Monitoring">
-            <div className="flex items-center gap-3">
-              <GeneratePublicToggle
-                isGenerating={isGenerating}
-                toast={toast}
-                onClick={handleGeneratePublic}
-              />
-              <ScannerToggle onClick={openRiskScanner} />
-            </div>
-          </SectionHeader>
-
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
-            {/* Left Column (33%) - Terminal */}
-            <div className="min-w-0">
-              <Terminal />
-            </div>
-
-            {/* Right Column (66%) - Monitor */}
-            <div className="min-w-0">
-              <Monitor />
-            </div>
-          </div>
         </section>
       </main>
 
       <Footer />
 
-      {/* Risk Scanner Overlay */}
-      <RiskScannerOverlay
-        isOpen={isRiskScannerOpen}
-        onClose={closeRiskScanner}
-      />
-
-      {/* Admin Overlay */}
-      <AdminOverlay
-        isOpen={isAdminOpen}
-        onClose={closeAdmin}
-      />
+      <RiskScannerOverlay isOpen={isRiskScannerOpen} onClose={() => setIsRiskScannerOpen(false)} />
+      <AdminOverlay isOpen={isAdminOpen} onClose={closeAdmin} />
     </div>
   );
 }

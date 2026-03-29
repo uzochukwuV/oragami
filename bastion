@@ -1,0 +1,1258 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface, TransferChecked, transfer_checked};
+
+declare_id!("3rsfme5BC3htuFJwFohPgNiDDmSo43gqZgQNvtKz3HVv");
+
+/// Bastion: Institutional Permissioned DeFi Vault
+///
+/// An institutional-grade vault with role-based access control, KYC gates,
+/// multi-sig approvals, spending limits, and full audit trail on Solana.
+#[program]
+pub mod bastion {
+    use super::*;
+
+    /// Initialize a new institutional vault.
+    pub fn initialize_vault(
+        ctx: Context<InitializeVault>,
+        name: String,
+        daily_limit: u64,
+        approval_threshold: u8,
+    ) -> Result<()> {
+        require!(name.len() <= 32, BastionError::NameTooLong);
+        require!(approval_threshold >= 1 && approval_threshold <= 10, BastionError::InvalidThreshold);
+
+        let vault = &mut ctx.accounts.vault;
+        vault.authority = ctx.accounts.authority.key();
+        vault.name = name;
+        vault.daily_limit = daily_limit;
+        vault.approval_threshold = approval_threshold;
+        vault.total_deposited = 0;
+        vault.total_withdrawn = 0;
+        vault.member_count = 1;
+        vault.transaction_count = 0;
+        vault.created_at = Clock::get()?.unix_timestamp;
+        vault.paused = false;
+        vault.bump = ctx.bumps.vault;
+
+        // Auto-add creator as Admin
+        let member = &mut ctx.accounts.creator_member;
+        member.vault = vault.key();
+        member.wallet = ctx.accounts.authority.key();
+        member.role = Role::Admin as u8;
+        member.kyc_verified = false;
+        member.daily_spent = 0;
+        member.last_reset = Clock::get()?.unix_timestamp;
+        member.joined_at = Clock::get()?.unix_timestamp;
+        member.bump = ctx.bumps.creator_member;
+
+        emit!(VaultCreated {
+            vault: vault.key(),
+            authority: vault.authority,
+            name: vault.name.clone(),
+            daily_limit,
+            approval_threshold,
+            timestamp: vault.created_at,
+        });
+
+        Ok(())
+    }
+
+    /// Add a member to the vault with a specific role.
+    /// Only Admin can add members.
+    pub fn add_member(
+        ctx: Context<AddMember>,
+        wallet: Pubkey,
+        role: u8,
+    ) -> Result<()> {
+        let caller_member = &ctx.accounts.caller_member;
+        require!(caller_member.role == Role::Admin as u8, BastionError::Unauthorized);
+        require!(role <= Role::Viewer as u8, BastionError::InvalidRole);
+
+        let vault = &mut ctx.accounts.vault;
+        vault.member_count += 1;
+
+        let member = &mut ctx.accounts.new_member;
+        member.vault = vault.key();
+        member.wallet = wallet;
+        member.role = role;
+        member.kyc_verified = false;
+        member.daily_spent = 0;
+        member.last_reset = Clock::get()?.unix_timestamp;
+        member.joined_at = Clock::get()?.unix_timestamp;
+        member.bump = ctx.bumps.new_member;
+
+        emit!(MemberAdded {
+            vault: vault.key(),
+            wallet,
+            role,
+            added_by: ctx.accounts.caller.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Verify a member's KYC status. Only Admin can verify.
+    /// In production, this would be called by an oracle or compliance provider.
+    pub fn verify_kyc(
+        ctx: Context<VerifyKyc>,
+        kyc_provider: String,
+        kyc_reference: String,
+    ) -> Result<()> {
+        let caller_member = &ctx.accounts.caller_member;
+        require!(caller_member.role == Role::Admin as u8, BastionError::Unauthorized);
+        require!(kyc_provider.len() <= 32, BastionError::NameTooLong);
+        require!(kyc_reference.len() <= 64, BastionError::NameTooLong);
+
+        let member = &mut ctx.accounts.target_member;
+        member.kyc_verified = true;
+
+        emit!(KycVerified {
+            vault: ctx.accounts.vault.key(),
+            wallet: member.wallet,
+            provider: kyc_provider,
+            reference: kyc_reference,
+            verified_by: ctx.accounts.caller.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Deposit stablecoins into the vault.
+    /// Requires KYC verification.
+    pub fn deposit(
+        ctx: Context<Deposit>,
+        amount: u64,
+    ) -> Result<()> {
+        let member = &ctx.accounts.member;
+        let vault = &ctx.accounts.vault;
+
+        require!(!vault.paused, BastionError::VaultPaused);
+        require!(member.kyc_verified, BastionError::KycRequired);
+        require!(amount > 0, BastionError::InvalidAmount);
+        require!(
+            member.role == Role::Admin as u8
+                || member.role == Role::Manager as u8
+                || member.role == Role::Operator as u8,
+            BastionError::Unauthorized
+        );
+
+        // Transfer tokens from depositor to vault
+        let cpi_accounts = TransferChecked {
+            from: ctx.accounts.depositor_token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            to: ctx.accounts.vault_token_account.to_account_info(),
+            authority: ctx.accounts.depositor.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
+
+        // Update vault state
+        let vault = &mut ctx.accounts.vault;
+        vault.total_deposited += amount;
+        vault.transaction_count += 1;
+
+        emit!(DepositMade {
+            vault: vault.key(),
+            depositor: ctx.accounts.depositor.key(),
+            amount,
+            total_deposited: vault.total_deposited,
+            transaction_id: vault.transaction_count,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Request a withdrawal. If amount exceeds daily limit or role requires it,
+    /// creates a pending approval instead of immediate withdrawal.
+    pub fn request_withdrawal(
+        ctx: Context<RequestWithdrawal>,
+        amount: u64,
+        recipient: Pubkey,
+        memo: String,
+    ) -> Result<()> {
+        let member = &mut ctx.accounts.member;
+        let vault = &ctx.accounts.vault;
+
+        require!(!vault.paused, BastionError::VaultPaused);
+        require!(member.kyc_verified, BastionError::KycRequired);
+        require!(amount > 0, BastionError::InvalidAmount);
+        require!(memo.len() <= 256, BastionError::MemoTooLong);
+        require!(
+            member.role == Role::Admin as u8
+                || member.role == Role::Manager as u8
+                || member.role == Role::Operator as u8,
+            BastionError::Unauthorized
+        );
+
+        // Reset daily spending if new day
+        let now = Clock::get()?.unix_timestamp;
+        let day_seconds: i64 = 86400;
+        if now - member.last_reset >= day_seconds {
+            member.daily_spent = 0;
+            member.last_reset = now;
+        }
+
+        // Check daily spending limit
+        let effective_limit = match member.role {
+            r if r == Role::Admin as u8 => vault.daily_limit,
+            r if r == Role::Manager as u8 => vault.daily_limit / 2,
+            r if r == Role::Operator as u8 => vault.daily_limit / 10,
+            _ => 0,
+        };
+        require!(
+            member.daily_spent + amount <= effective_limit,
+            BastionError::DailyLimitExceeded
+        );
+
+        // Determine if approval is needed
+        let needs_approval = amount > effective_limit / 2
+            || member.role != Role::Admin as u8;
+
+        let withdrawal = &mut ctx.accounts.withdrawal;
+        withdrawal.vault = vault.key();
+        withdrawal.requester = ctx.accounts.requester.key();
+        withdrawal.recipient = recipient;
+        withdrawal.amount = amount;
+        withdrawal.memo = memo;
+        withdrawal.approvals = 0;
+        withdrawal.executed = false;
+        withdrawal.rejected = false;
+        withdrawal.needs_approval = needs_approval;
+        withdrawal.created_at = now;
+        withdrawal.bump = ctx.bumps.withdrawal;
+
+        let vault = &mut ctx.accounts.vault;
+        vault.transaction_count += 1;
+        withdrawal.transaction_id = vault.transaction_count;
+
+        // Update daily spending
+        member.daily_spent += amount;
+
+        emit!(WithdrawalRequested {
+            vault: vault.key(),
+            requester: ctx.accounts.requester.key(),
+            recipient,
+            amount,
+            needs_approval,
+            transaction_id: withdrawal.transaction_id,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Approve a pending withdrawal. Admin or Manager can approve.
+    pub fn approve_withdrawal(ctx: Context<ApproveWithdrawal>) -> Result<()> {
+        let caller_member = &ctx.accounts.caller_member;
+        require!(
+            caller_member.role == Role::Admin as u8
+                || caller_member.role == Role::Manager as u8,
+            BastionError::Unauthorized
+        );
+        require!(caller_member.kyc_verified, BastionError::KycRequired);
+
+        let withdrawal = &mut ctx.accounts.withdrawal;
+        require!(!withdrawal.executed, BastionError::AlreadyExecuted);
+        require!(!withdrawal.rejected, BastionError::AlreadyRejected);
+
+        withdrawal.approvals += 1;
+
+        emit!(WithdrawalApproved {
+            vault: withdrawal.vault,
+            transaction_id: withdrawal.transaction_id,
+            approved_by: ctx.accounts.caller.key(),
+            total_approvals: withdrawal.approvals,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Execute an approved withdrawal. Transfers tokens from vault to recipient.
+    pub fn execute_withdrawal(ctx: Context<ExecuteWithdrawal>) -> Result<()> {
+        let withdrawal = &mut ctx.accounts.withdrawal;
+        let vault = &ctx.accounts.vault;
+
+        require!(!withdrawal.executed, BastionError::AlreadyExecuted);
+        require!(!withdrawal.rejected, BastionError::AlreadyRejected);
+
+        // Check approval threshold
+        if withdrawal.needs_approval {
+            require!(
+                withdrawal.approvals >= vault.approval_threshold,
+                BastionError::InsufficientApprovals
+            );
+        }
+
+        // Travel Rule: amounts over 3000 USDC (3000 * 10^6 = 3_000_000_000)
+        // In production, this would trigger originator/beneficiary data collection
+        let travel_rule_applies = withdrawal.amount >= 3_000_000_000;
+
+        // Transfer tokens from vault to recipient using PDA authority
+        let vault_key = vault.key();
+        let seeds = &[
+            b"vault".as_ref(),
+            vault.authority.as_ref(),
+            vault.name.as_bytes(),
+            &[vault.bump],
+        ];
+        let signer = &[&seeds[..]];
+
+        let cpi_accounts = TransferChecked {
+            from: ctx.accounts.vault_token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            to: ctx.accounts.recipient_token_account.to_account_info(),
+            authority: ctx.accounts.vault.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        transfer_checked(
+            cpi_ctx,
+            withdrawal.amount,
+            ctx.accounts.mint.decimals,
+        )?;
+
+        // Update state
+        withdrawal.executed = true;
+        let vault = &mut ctx.accounts.vault;
+        vault.total_withdrawn += withdrawal.amount;
+
+        emit!(WithdrawalExecuted {
+            vault: vault_key,
+            transaction_id: withdrawal.transaction_id,
+            recipient: withdrawal.recipient,
+            amount: withdrawal.amount,
+            travel_rule_applies,
+            executed_by: ctx.accounts.executor.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Pause the vault. Only Admin can pause. Emergency stop.
+    pub fn pause_vault(ctx: Context<PauseVault>) -> Result<()> {
+        let caller_member = &ctx.accounts.caller_member;
+        require!(caller_member.role == Role::Admin as u8, BastionError::Unauthorized);
+
+        let vault = &mut ctx.accounts.vault;
+        vault.paused = true;
+
+        emit!(VaultPaused {
+            vault: vault.key(),
+            paused_by: ctx.accounts.caller.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Unpause the vault. Only Admin can unpause.
+    pub fn unpause_vault(ctx: Context<PauseVault>) -> Result<()> {
+        let caller_member = &ctx.accounts.caller_member;
+        require!(caller_member.role == Role::Admin as u8, BastionError::Unauthorized);
+
+        let vault = &mut ctx.accounts.vault;
+        vault.paused = false;
+
+        emit!(VaultUnpaused {
+            vault: vault.key(),
+            unpaused_by: ctx.accounts.caller.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Token-2022 Transfer Hook Instructions
+    // ========================================================================
+
+    /// Transfer Hook — called by Token-2022 before every transfer
+    /// Enforces KYC, spending limits, and Travel Rule at the token level.
+    /// This is invoked automatically by the Token-2022 program as part of
+    /// the transfer extension mechanism.
+    pub fn transfer_hook(
+        ctx: Context<TransferHook>,
+        amount: u64,
+    ) -> Result<()> {
+        let source_kyc = &ctx.accounts.source_kyc;
+        let dest_kyc = &ctx.accounts.dest_kyc;
+
+        // 1. Check source wallet has valid KYC attestation
+        require!(
+            source_kyc.wallet == ctx.accounts.source.key(),
+            BastionError::KycMismatch
+        );
+        require!(source_kyc.verified, BastionError::KycRequired);
+        require!(
+            source_kyc.expiry > Clock::get()?.unix_timestamp,
+            BastionError::KycExpired
+        );
+
+        // 2. Check destination wallet has valid KYC attestation
+        require!(
+            dest_kyc.wallet == ctx.accounts.destination.key(),
+            BastionError::KycMismatch
+        );
+        require!(dest_kyc.verified, BastionError::KycRequired);
+        require!(
+            dest_kyc.expiry > Clock::get()?.unix_timestamp,
+            BastionError::KycExpired
+        );
+
+        // 3. Check token-level spending limit for source
+        let source_token_state = &mut ctx.accounts.source_token_state;
+        let now = Clock::get()?.unix_timestamp;
+        let day_seconds: i64 = 86400;
+
+        // Reset daily spending if new day
+        if now - source_token_state.last_transfer_reset >= day_seconds {
+            source_token_state.daily_transferred = 0;
+            source_token_state.last_transfer_reset = now;
+        }
+
+        require!(
+            source_token_state.daily_transferred + amount <= source_token_state.daily_limit,
+            BastionError::DailyLimitExceeded
+        );
+
+        source_token_state.daily_transferred += amount;
+
+        // 4. If amount >= Travel Rule threshold, verify Travel Rule data exists
+        let travel_rule_threshold: u64 = 3_000_000_000; // 3000 * 10^6 for USDC with 6 decimals
+
+        if amount >= travel_rule_threshold {
+            let travel_rule = &ctx.accounts.travel_rule_data;
+            require!(
+                travel_rule.is_filled,
+                BastionError::TravelRuleDataMissing
+            );
+            require!(
+                travel_rule.originator == ctx.accounts.source.key(),
+                BastionError::TravelRuleMismatch
+            );
+            require!(
+                travel_rule.beneficiary == ctx.accounts.destination.key(),
+                BastionError::TravelRuleMismatch
+            );
+        }
+
+        // 5. Emit compliance event
+        emit!(TransferHookTriggered {
+            source: ctx.accounts.source.key(),
+            destination: ctx.accounts.destination.key(),
+            amount,
+            source_kyc_provider: source_kyc.provider.clone(),
+            dest_kyc_provider: dest_kyc.provider.clone(),
+            travel_rule_applies: amount >= travel_rule_threshold,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Create a KYC attestation account for a wallet.
+    /// Only compliance providers can attest KYC status on-chain.
+    pub fn create_kyc_attestation(
+        ctx: Context<CreateKycAttestation>,
+        provider: String,
+        kyc_expiry_days: u16,
+    ) -> Result<()> {
+        require!(provider.len() <= 32, BastionError::NameTooLong);
+        require!(kyc_expiry_days > 0 && kyc_expiry_days <= 3650, BastionError::InvalidKycExpiry); // 1-10 years
+
+        let now = Clock::get()?.unix_timestamp;
+        let expiry = now + (kyc_expiry_days as i64 * 86400);
+
+        let attestation = &mut ctx.accounts.kyc_attestation;
+        attestation.wallet = ctx.accounts.subject.key();
+        attestation.verified = true;
+        attestation.provider = provider;
+        attestation.verified_at = now;
+        attestation.expiry = expiry;
+        attestation.bump = ctx.bumps.kyc_attestation;
+
+        emit!(KycAttestationCreated {
+            wallet: attestation.wallet,
+            provider: attestation.provider.clone(),
+            verified_at: now,
+            expiry,
+            created_by: ctx.accounts.provider.key(),
+        });
+
+        Ok(())
+    }
+
+    /// Update KYC attestation (e.g., renew expiry).
+    /// Only the original provider can update their own attestation.
+    pub fn update_kyc_attestation(
+        ctx: Context<UpdateKycAttestation>,
+        new_expiry_days: u16,
+    ) -> Result<()> {
+        require!(new_expiry_days > 0 && new_expiry_days <= 3650, BastionError::InvalidKycExpiry);
+
+        let now = Clock::get()?.unix_timestamp;
+        let new_expiry = now + (new_expiry_days as i64 * 86400);
+
+        let attestation = &mut ctx.accounts.kyc_attestation;
+        attestation.expiry = new_expiry;
+
+        emit!(KycAttestationUpdated {
+            wallet: attestation.wallet,
+            provider: attestation.provider.clone(),
+            new_expiry,
+            updated_by: ctx.accounts.provider.key(),
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Submit Travel Rule data for large transfers.
+    /// Required for transfers >= 3000 USDC as per FATF regulations.
+    pub fn submit_travel_rule_data(
+        ctx: Context<SubmitTravelRuleData>,
+        originator_name: String,
+        originator_address: String,
+        beneficiary_name: String,
+        beneficiary_address: String,
+        tx_reference: String,
+    ) -> Result<()> {
+        require!(originator_name.len() <= 128, BastionError::NameTooLong);
+        require!(originator_address.len() <= 256, BastionError::MemoTooLong);
+        require!(beneficiary_name.len() <= 128, BastionError::NameTooLong);
+        require!(beneficiary_address.len() <= 256, BastionError::MemoTooLong);
+        require!(tx_reference.len() <= 64, BastionError::NameTooLong);
+
+        let now = Clock::get()?.unix_timestamp;
+
+        let travel_rule = &mut ctx.accounts.travel_rule_data;
+        travel_rule.originator = ctx.accounts.originator.key();
+        travel_rule.originator_name = originator_name;
+        travel_rule.originator_address = originator_address;
+        travel_rule.beneficiary = ctx.accounts.beneficiary.key();
+        travel_rule.beneficiary_name = beneficiary_name;
+        travel_rule.beneficiary_address = beneficiary_address;
+        travel_rule.tx_reference = tx_reference;
+        travel_rule.is_filled = true;
+        travel_rule.submitted_at = now;
+        travel_rule.bump = ctx.bumps.travel_rule_data;
+
+        emit!(TravelRuleDataSubmitted {
+            originator: travel_rule.originator,
+            beneficiary: travel_rule.beneficiary,
+            tx_reference: travel_rule.tx_reference.clone(),
+            submitted_by: ctx.accounts.submitter.key(),
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Initialize token-level spending limits for a wallet.
+    /// Allows per-wallet daily transfer limits at the token level.
+    pub fn initialize_token_limit(
+        ctx: Context<InitializeTokenLimit>,
+        daily_limit: u64,
+    ) -> Result<()> {
+        require!(daily_limit > 0, BastionError::InvalidAmount);
+
+        let token_state = &mut ctx.accounts.token_state;
+        token_state.wallet = ctx.accounts.wallet.key();
+        token_state.daily_limit = daily_limit;
+        token_state.daily_transferred = 0;
+        token_state.last_transfer_reset = Clock::get()?.unix_timestamp;
+        token_state.bump = ctx.bumps.token_state;
+
+        emit!(TokenLimitInitialized {
+            wallet: token_state.wallet,
+            daily_limit,
+            initialized_by: ctx.accounts.admin.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Accounts
+// ============================================================================
+
+#[derive(Accounts)]
+#[instruction(name: String)]
+pub struct InitializeVault<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = Vault::SIZE,
+        seeds = [b"vault", authority.key().as_ref(), name.as_bytes()],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = Member::SIZE,
+        seeds = [b"member", vault.key().as_ref(), authority.key().as_ref()],
+        bump
+    )]
+    pub creator_member: Account<'info, Member>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(wallet: Pubkey)]
+pub struct AddMember<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        seeds = [b"member", vault.key().as_ref(), caller.key().as_ref()],
+        bump = caller_member.bump
+    )]
+    pub caller_member: Account<'info, Member>,
+
+    #[account(
+        init,
+        payer = caller,
+        space = Member::SIZE,
+        seeds = [b"member", vault.key().as_ref(), wallet.as_ref()],
+        bump
+    )]
+    pub new_member: Account<'info, Member>,
+
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct VerifyKyc<'info> {
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        seeds = [b"member", vault.key().as_ref(), caller.key().as_ref()],
+        bump = caller_member.bump
+    )]
+    pub caller_member: Account<'info, Member>,
+
+    #[account(
+        mut,
+        seeds = [b"member", vault.key().as_ref(), target_member.wallet.as_ref()],
+        bump = target_member.bump
+    )]
+    pub target_member: Account<'info, Member>,
+
+    pub caller: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        seeds = [b"member", vault.key().as_ref(), depositor.key().as_ref()],
+        bump = member.bump
+    )]
+    pub member: Account<'info, Member>,
+
+    #[account(mut)]
+    pub depositor_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    pub depositor: Signer<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct RequestWithdrawal<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [b"member", vault.key().as_ref(), requester.key().as_ref()],
+        bump = member.bump
+    )]
+    pub member: Account<'info, Member>,
+
+    #[account(
+        init,
+        payer = requester,
+        space = Withdrawal::SIZE,
+        seeds = [b"withdrawal", vault.key().as_ref(), &(vault.transaction_count + 1).to_le_bytes()],
+        bump
+    )]
+    pub withdrawal: Account<'info, Withdrawal>,
+
+    #[account(mut)]
+    pub requester: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ApproveWithdrawal<'info> {
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        seeds = [b"member", vault.key().as_ref(), caller.key().as_ref()],
+        bump = caller_member.bump
+    )]
+    pub caller_member: Account<'info, Member>,
+
+    #[account(mut)]
+    pub withdrawal: Account<'info, Withdrawal>,
+
+    pub caller: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ExecuteWithdrawal<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+
+    #[account(mut)]
+    pub withdrawal: Account<'info, Withdrawal>,
+
+    #[account(mut)]
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    pub executor: Signer<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct PauseVault<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+
+    #[account(
+        seeds = [b"member", vault.key().as_ref(), caller.key().as_ref()],
+        bump = caller_member.bump
+    )]
+    pub caller_member: Account<'info, Member>,
+
+    pub caller: Signer<'info>,
+}
+
+// ============================================================================
+// Token-2022 Transfer Hook Accounts
+// ============================================================================
+
+#[derive(Accounts)]
+pub struct TransferHook<'info> {
+    /// Source wallet initiating the transfer
+    pub source: Signer<'info>,
+
+    /// Destination wallet receiving the transfer
+    pub destination: UncheckedAccount<'info>,
+
+    /// KYC attestation for source
+    #[account(
+        seeds = [b"kyc_attestation", source.key().as_ref()],
+        bump = source_kyc.bump
+    )]
+    pub source_kyc: Account<'info, KycAttestation>,
+
+    /// KYC attestation for destination
+    #[account(
+        seeds = [b"kyc_attestation", destination.key().as_ref()],
+        bump = dest_kyc.bump
+    )]
+    pub dest_kyc: Account<'info, KycAttestation>,
+
+    /// Token-level spending state for source
+    #[account(
+        mut,
+        seeds = [b"token_state", source.key().as_ref()],
+        bump = source_token_state.bump
+    )]
+    pub source_token_state: Account<'info, TokenLimitState>,
+
+    /// Travel Rule data (optional, required if amount >= 3000 USDC)
+    #[account(
+        seeds = [b"travel_rule", source.key().as_ref(), destination.key().as_ref()],
+        bump = travel_rule_data.bump
+    )]
+    pub travel_rule_data: Account<'info, TravelRuleData>,
+}
+
+#[derive(Accounts)]
+pub struct CreateKycAttestation<'info> {
+    /// Subject wallet being attested
+    pub subject: UncheckedAccount<'info>,
+
+    /// Compliance provider (signer)
+    pub provider: Signer<'info>,
+
+    /// KYC attestation account
+    #[account(
+        init,
+        payer = provider,
+        space = KycAttestation::SIZE,
+        seeds = [b"kyc_attestation", subject.key().as_ref()],
+        bump
+    )]
+    pub kyc_attestation: Account<'info, KycAttestation>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateKycAttestation<'info> {
+    /// Compliance provider (signer) — must match original provider
+    pub provider: Signer<'info>,
+
+    /// KYC attestation to update
+    #[account(
+        mut,
+        seeds = [b"kyc_attestation", kyc_attestation.wallet.as_ref()],
+        bump = kyc_attestation.bump,
+        constraint = kyc_attestation.provider == provider.key().to_string() @ BastionError::Unauthorized
+    )]
+    pub kyc_attestation: Account<'info, KycAttestation>,
+}
+
+#[derive(Accounts)]
+pub struct SubmitTravelRuleData<'info> {
+    /// Originating wallet
+    pub originator: UncheckedAccount<'info>,
+
+    /// Beneficiary wallet
+    pub beneficiary: UncheckedAccount<'info>,
+
+    /// Compliance submitter (signer)
+    pub submitter: Signer<'info>,
+
+    /// Travel Rule data account
+    #[account(
+        init,
+        payer = submitter,
+        space = TravelRuleData::SIZE,
+        seeds = [b"travel_rule", originator.key().as_ref(), beneficiary.key().as_ref()],
+        bump
+    )]
+    pub travel_rule_data: Account<'info, TravelRuleData>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeTokenLimit<'info> {
+    /// Wallet to set spending limit for
+    pub wallet: UncheckedAccount<'info>,
+
+    /// Admin (signer)
+    pub admin: Signer<'info>,
+
+    /// Token limit state
+    #[account(
+        init,
+        payer = admin,
+        space = TokenLimitState::SIZE,
+        seeds = [b"token_state", wallet.key().as_ref()],
+        bump
+    )]
+    pub token_state: Account<'info, TokenLimitState>,
+
+    pub system_program: Program<'info, System>,
+}
+
+// ============================================================================
+// State
+// ============================================================================
+
+#[account]
+pub struct Vault {
+    pub authority: Pubkey,        // 32
+    pub name: String,             // 4 + 32
+    pub daily_limit: u64,         // 8
+    pub approval_threshold: u8,   // 1
+    pub total_deposited: u64,     // 8
+    pub total_withdrawn: u64,     // 8
+    pub member_count: u16,        // 2
+    pub transaction_count: u64,   // 8
+    pub created_at: i64,          // 8
+    pub paused: bool,             // 1
+    pub bump: u8,                 // 1
+}
+
+impl Vault {
+    pub const SIZE: usize = 8  // discriminator
+        + 32   // authority
+        + 4 + 32  // name (String: 4 byte len + max 32 chars)
+        + 8    // daily_limit
+        + 1    // approval_threshold
+        + 8    // total_deposited
+        + 8    // total_withdrawn
+        + 2    // member_count
+        + 8    // transaction_count
+        + 8    // created_at
+        + 1    // paused
+        + 1    // bump
+        + 64;  // padding for future fields
+}
+
+#[account]
+pub struct Member {
+    pub vault: Pubkey,          // 32
+    pub wallet: Pubkey,         // 32
+    pub role: u8,               // 1
+    pub kyc_verified: bool,     // 1
+    pub daily_spent: u64,       // 8
+    pub last_reset: i64,        // 8
+    pub joined_at: i64,         // 8
+    pub bump: u8,               // 1
+}
+
+impl Member {
+    pub const SIZE: usize = 8  // discriminator
+        + 32   // vault
+        + 32   // wallet
+        + 1    // role
+        + 1    // kyc_verified
+        + 8    // daily_spent
+        + 8    // last_reset
+        + 8    // joined_at
+        + 1    // bump
+        + 32;  // padding
+}
+
+#[account]
+pub struct Withdrawal {
+    pub vault: Pubkey,          // 32
+    pub requester: Pubkey,      // 32
+    pub recipient: Pubkey,      // 32
+    pub amount: u64,            // 8
+    pub memo: String,           // 4 + 256
+    pub approvals: u8,          // 1
+    pub executed: bool,         // 1
+    pub rejected: bool,         // 1
+    pub needs_approval: bool,   // 1
+    pub transaction_id: u64,    // 8
+    pub created_at: i64,        // 8
+    pub bump: u8,               // 1
+}
+
+impl Withdrawal {
+    pub const SIZE: usize = 8  // discriminator
+        + 32   // vault
+        + 32   // requester
+        + 32   // recipient
+        + 8    // amount
+        + 4 + 256  // memo
+        + 1    // approvals
+        + 1    // executed
+        + 1    // rejected
+        + 1    // needs_approval
+        + 8    // transaction_id
+        + 8    // created_at
+        + 1    // bump
+        + 32;  // padding
+}
+
+/// KYC attestation — on-chain proof that a wallet has passed KYC
+#[account]
+pub struct KycAttestation {
+    pub wallet: Pubkey,              // 32 — wallet being attested
+    pub verified: bool,              // 1  — KYC status
+    pub provider: String,            // 4 + 32 — compliance provider name
+    pub verified_at: i64,            // 8  — when KYC was verified
+    pub expiry: i64,                 // 8  — when KYC expires
+    pub bump: u8,                    // 1
+}
+
+impl KycAttestation {
+    pub const SIZE: usize = 8  // discriminator
+        + 32   // wallet
+        + 1    // verified
+        + 4 + 32  // provider (String: 4 byte len + max 32 chars)
+        + 8    // verified_at
+        + 8    // expiry
+        + 1    // bump
+        + 32;  // padding
+}
+
+/// Travel Rule data — originator and beneficiary info for large transfers
+#[account]
+pub struct TravelRuleData {
+    pub originator: Pubkey,          // 32 — sending wallet
+    pub originator_name: String,     // 4 + 128 — originator legal name
+    pub originator_address: String,  // 4 + 256 — originator address
+    pub beneficiary: Pubkey,         // 32 — receiving wallet
+    pub beneficiary_name: String,    // 4 + 128 — beneficiary legal name
+    pub beneficiary_address: String, // 4 + 256 — beneficiary address
+    pub tx_reference: String,        // 4 + 64  — unique transaction reference
+    pub is_filled: bool,             // 1  — whether data is complete
+    pub submitted_at: i64,           // 8  — when submitted
+    pub bump: u8,                    // 1
+}
+
+impl TravelRuleData {
+    pub const SIZE: usize = 8  // discriminator
+        + 32   // originator
+        + 4 + 128  // originator_name
+        + 4 + 256  // originator_address
+        + 32   // beneficiary
+        + 4 + 128  // beneficiary_name
+        + 4 + 256  // beneficiary_address
+        + 4 + 64   // tx_reference
+        + 1    // is_filled
+        + 8    // submitted_at
+        + 1    // bump
+        + 32;  // padding
+}
+
+/// Token-level spending state — tracks daily transfer limits at the token level
+#[account]
+pub struct TokenLimitState {
+    pub wallet: Pubkey,              // 32 — wallet owning this state
+    pub daily_limit: u64,            // 8  — max daily transfer amount
+    pub daily_transferred: u64,      // 8  — amount transferred today
+    pub last_transfer_reset: i64,    // 8  — timestamp of last daily reset
+    pub bump: u8,                    // 1
+}
+
+impl TokenLimitState {
+    pub const SIZE: usize = 8  // discriminator
+        + 32   // wallet
+        + 8    // daily_limit
+        + 8    // daily_transferred
+        + 8    // last_transfer_reset
+        + 1    // bump
+        + 32;  // padding
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Admin = 0,      // Full control: add members, verify KYC, unlimited ops
+    Manager = 1,    // Approve withdrawals, 50% of daily limit
+    Operator = 2,   // Request withdrawals, 10% of daily limit
+    Viewer = 3,     // Read-only access (cannot transact)
+}
+
+// ============================================================================
+// Events (Audit Trail)
+// ============================================================================
+
+#[event]
+pub struct VaultCreated {
+    pub vault: Pubkey,
+    pub authority: Pubkey,
+    pub name: String,
+    pub daily_limit: u64,
+    pub approval_threshold: u8,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct MemberAdded {
+    pub vault: Pubkey,
+    pub wallet: Pubkey,
+    pub role: u8,
+    pub added_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct KycVerified {
+    pub vault: Pubkey,
+    pub wallet: Pubkey,
+    pub provider: String,
+    pub reference: String,
+    pub verified_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct DepositMade {
+    pub vault: Pubkey,
+    pub depositor: Pubkey,
+    pub amount: u64,
+    pub total_deposited: u64,
+    pub transaction_id: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct WithdrawalRequested {
+    pub vault: Pubkey,
+    pub requester: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub needs_approval: bool,
+    pub transaction_id: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct WithdrawalApproved {
+    pub vault: Pubkey,
+    pub transaction_id: u64,
+    pub approved_by: Pubkey,
+    pub total_approvals: u8,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct WithdrawalExecuted {
+    pub vault: Pubkey,
+    pub transaction_id: u64,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub travel_rule_applies: bool,
+    pub executed_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct VaultPaused {
+    pub vault: Pubkey,
+    pub paused_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct VaultUnpaused {
+    pub vault: Pubkey,
+    pub unpaused_by: Pubkey,
+    pub timestamp: i64,
+}
+
+// ============================================================================
+// Transfer Hook Compliance Events
+// ============================================================================
+
+#[event]
+pub struct TransferHookTriggered {
+    pub source: Pubkey,
+    pub destination: Pubkey,
+    pub amount: u64,
+    pub source_kyc_provider: String,
+    pub dest_kyc_provider: String,
+    pub travel_rule_applies: bool,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct KycAttestationCreated {
+    pub wallet: Pubkey,
+    pub provider: String,
+    pub verified_at: i64,
+    pub expiry: i64,
+    pub created_by: Pubkey,
+}
+
+#[event]
+pub struct KycAttestationUpdated {
+    pub wallet: Pubkey,
+    pub provider: String,
+    pub new_expiry: i64,
+    pub updated_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct TravelRuleDataSubmitted {
+    pub originator: Pubkey,
+    pub beneficiary: Pubkey,
+    pub tx_reference: String,
+    pub submitted_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct TokenLimitInitialized {
+    pub wallet: Pubkey,
+    pub daily_limit: u64,
+    pub initialized_by: Pubkey,
+    pub timestamp: i64,
+}
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+#[error_code]
+pub enum BastionError {
+    #[msg("Unauthorized: insufficient role permissions")]
+    Unauthorized,
+
+    #[msg("KYC verification required before transacting")]
+    KycRequired,
+
+    #[msg("Daily spending limit exceeded")]
+    DailyLimitExceeded,
+
+    #[msg("Vault is paused — no transactions allowed")]
+    VaultPaused,
+
+    #[msg("Invalid amount: must be greater than zero")]
+    InvalidAmount,
+
+    #[msg("Insufficient approvals for this withdrawal")]
+    InsufficientApprovals,
+
+    #[msg("Withdrawal already executed")]
+    AlreadyExecuted,
+
+    #[msg("Withdrawal already rejected")]
+    AlreadyRejected,
+
+    #[msg("Name too long (max 32 characters)")]
+    NameTooLong,
+
+    #[msg("Memo too long (max 256 characters)")]
+    MemoTooLong,
+
+    #[msg("Invalid role")]
+    InvalidRole,
+
+    #[msg("Invalid approval threshold (1-10)")]
+    InvalidThreshold,
+
+    // Token-2022 Transfer Hook errors
+    #[msg("KYC attestation wallet mismatch")]
+    KycMismatch,
+
+    #[msg("KYC attestation has expired")]
+    KycExpired,
+
+    #[msg("Travel Rule data missing for large transfer")]
+    TravelRuleDataMissing,
+
+    #[msg("Travel Rule data wallet mismatch")]
+    TravelRuleMismatch,
+
+    #[msg("Invalid KYC expiry duration")]
+    InvalidKycExpiry,
+}

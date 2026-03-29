@@ -32,9 +32,12 @@ pub struct SixConfig {
 impl Default for SixConfig {
     fn default() -> Self {
         Self {
-            base_url: "https://api.six-group.com".to_string(),
-            cert_path: "six-data-access/CH56655-api2026hack22/certificate.p12".to_string(),
-            cert_password: "sixhackathon2026".to_string(),
+            base_url: std::env::var("SIX_API_BASE_URL")
+                .unwrap_or_else(|_| "https://api.six-group.com".to_string()),
+            cert_path: std::env::var("SIX_CERT_PATH")
+                .unwrap_or_else(|_| "six-data-cert/certificate.p12".to_string()),
+            cert_password: std::env::var("SIX_CERT_PASSWORD")
+                .unwrap_or_else(|_| "sixhackathon2026".to_string()),
             timeout_secs: 30,
         }
     }

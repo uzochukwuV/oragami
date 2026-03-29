@@ -1,9 +1,5 @@
-// src/app/(landing)/page.tsx
+import { redirect } from 'next/navigation';
 
 export default function LandingPage() {
-  return (
-    <main>
-      <h1> </h1>
-    </main>
-  );
+  redirect('/');
 }

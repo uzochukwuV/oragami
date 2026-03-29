@@ -6,10 +6,10 @@
  */
 
 import { PublicKey, Transaction, Connection } from '@solana/web3.js';
-import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { TOKEN_2022_PROGRAM_ID, getAccount } from '@solana/spl-token';
 
 export const TRANSFER_HOOK_PROGRAM_ID = new PublicKey(
-  'Cvau1tT3xGK9XQDqVjG1qGjvMaVQDqVjG1qGjvMaVQD'
+  process.env.NEXT_PUBLIC_TRANSFER_HOOK_PROGRAM_ID || '3K8V8s8gQtvJVZxW8Z9DvLU4MgginGBx5Yvptb7o6dmT'
 );
 
 export const COMPLIANCE_CONFIG_SEED = 'compliance';
@@ -19,18 +19,15 @@ export const WHITELIST_SEED = 'whitelist';
  * Get the compliance configuration PDA
  */
 export function getComplianceConfigPda(): PublicKey {
-  const [pda] = PublicKey.findProgramAddress(
+  const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from(COMPLIANCE_CONFIG_SEED)],
     TRANSFER_HOOK_PROGRAM_ID
   );
   return pda;
 }
 
-/**
- * Get the whitelist PDA for a specific wallet
- */
 export function getWhitelistPda(walletAddress: PublicKey): PublicKey {
-  const [pda] = PublicKey.findProgramAddress(
+  const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from(WHITELIST_SEED), walletAddress.toBuffer()],
     TRANSFER_HOOK_PROGRAM_ID
   );

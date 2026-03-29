@@ -1,4 +1,4 @@
-# Fireblocks Comprehensive Research Report
+Oragami is an institutional-grade RWA vault system built on Solana that enables regulated entities to deposit assets, receive vault tokens (cVAULT), and earn delta-neutral yield through Solstice USX integration. The system features comprehensive KYC/AML/KYT compliance through a custom Transfer Hook extension on Token-2022.# Fireblocks Comprehensive Research Report
 ## Oragami Project Integration Analysis
 
 **Date:** March 27, 2026  
