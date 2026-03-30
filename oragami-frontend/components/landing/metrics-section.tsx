@@ -1,134 +1,91 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-function AnimatedCounter({ end, suffix = "", prefix = "" }: { end: number; suffix?: string; prefix?: string }) {
+function Counter({ end, suffix = "", prefix = "" }: { end: number; suffix?: string; prefix?: string }) {
   const [count, setCount] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
-  const [hasAnimated, setHasAnimated] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const animated = useRef(false);
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !hasAnimated) {
-          setHasAnimated(true);
-          let start = 0;
-          const duration = 2000;
-          const startTime = performance.now();
-          const animate = (currentTime: number) => {
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = 1 - Math.pow(1 - progress, 3);
-            setCount(Math.floor(eased * end));
-            if (progress < 1) requestAnimationFrame(animate);
-          };
-          requestAnimationFrame(animate);
-        }
-      },
-      { threshold: 0.5 }
-    );
-    if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [end, hasAnimated]);
+    const obs = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && !animated.current) {
+        animated.current = true;
+        const start = performance.now();
+        const tick = (now: number) => {
+          const p = Math.min((now - start) / 1800, 1);
+          setCount(Math.floor((1 - Math.pow(1 - p, 3)) * end));
+          if (p < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }
+    }, { threshold: 0.5 });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [end]);
 
-  return (
-    <div ref={ref} className="text-6xl lg:text-8xl font-display tracking-tight">
-      {prefix}{count.toLocaleString()}{suffix}
-    </div>
-  );
+  return <span ref={ref}>{prefix}{count.toLocaleString()}{suffix}</span>;
 }
 
 const metrics = [
   {
-    value: 5,
-    suffix: "%",
-    prefix: "",
-    label: "Target APY via Solstice USX carry yield",
-    sub: "70% of deposits allocated to yield strategy",
+    value: 5, suffix: "%",
+    headline: "Target APY",
+    sub: "Earned via Solstice USX carry yield on 70% of deposits",
   },
   {
-    value: 50,
-    suffix: "%",
-    prefix: "",
-    label: "Gold weight in cVAULT NAV basket",
-    sub: "30% CHF/USD · 20% eUSX · priced by SIX Exchange",
+    value: 50, suffix: "%",
+    headline: "Gold weight in NAV",
+    sub: "50% XAU · 30% CHF/USD · 20% eUSX — priced by SIX Exchange every 2 min",
   },
   {
-    value: 100,
-    suffix: "%",
-    prefix: "",
-    label: "On-chain compliance enforcement",
-    sub: "KYC · AML · Travel Rule · Transfer Hook — no off-chain bypass",
+    value: 100, suffix: "%",
+    headline: "On-chain compliance",
+    sub: "KYC, AML, Travel Rule, and transfer hooks enforced at the contract level",
   },
   {
-    value: 3,
-    suffix: "",
-    prefix: "",
-    label: "Anchor programs deployed on Solana devnet",
+    value: 3, suffix: "",
+    headline: "Programs on devnet",
     sub: "oragami-vault · multi-asset-vault · cvault-transfer-hook",
   },
 ];
 
 export function MetricsSection() {
-  const [time, setTime] = useState(new Date());
-  const [isVisible, setIsVisible] = useState(false);
-  const sectionRef = useRef<HTMLElement>(null);
+  const [visible, setVisible] = useState(false);
+  const ref = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const interval = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setIsVisible(true); },
-      { threshold: 0.1 }
-    );
-    if (sectionRef.current) observer.observe(sectionRef.current);
-    return () => observer.disconnect();
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setVisible(true); }, { threshold: 0.1 });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
   }, []);
 
   return (
-    <section id="studio" ref={sectionRef} className="relative py-24 lg:py-32 border-y border-foreground/10">
+    <section id="studio" ref={ref} className="relative py-24 lg:py-32 border-y border-foreground/10">
       <div className="max-w-[1400px] mx-auto px-6 lg:px-12">
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8 mb-16 lg:mb-24">
-          <div>
-            <span className="inline-flex items-center gap-3 text-sm font-mono text-muted-foreground mb-6">
-              <span className="w-8 h-px bg-foreground/30" />
-              Vault metrics
-            </span>
-            <h2
-              className={`text-4xl lg:text-6xl font-display tracking-tight transition-all duration-700 ${
-                isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-              }`}
-            >
-              Numbers that
-              <br />
-              matter to institutions.
-            </h2>
-          </div>
-          <div className="flex items-center gap-4 font-mono text-sm text-muted-foreground">
-            <span className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              Devnet Live
-            </span>
-            <span className="text-foreground/30">|</span>
-            <span>{time.toLocaleTimeString()}</span>
-          </div>
+
+        <div className="mb-16">
+          <span className="inline-flex items-center gap-3 text-xs font-mono tracking-widest text-muted-foreground uppercase mb-6">
+            <span className="w-8 h-px bg-foreground/30" />
+            By the numbers
+          </span>
+          <h2 className={`text-4xl lg:text-5xl font-display tracking-tight transition-all duration-700 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
+            What institutions get.
+          </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-foreground/10">
-          {metrics.map((metric, index) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-foreground/10">
+          {metrics.map((m, i) => (
             <div
-              key={metric.label}
-              className={`bg-background p-8 lg:p-12 transition-all duration-700 ${
-                isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-              }`}
-              style={{ transitionDelay: `${index * 100}ms` }}
+              key={m.headline}
+              className={`bg-background p-8 lg:p-12 space-y-3 transition-all duration-700 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
+              style={{ transitionDelay: `${i * 80}ms` }}
             >
-              <AnimatedCounter end={metric.value} suffix={metric.suffix} prefix={metric.prefix} />
-              <div className="mt-4 text-lg text-muted-foreground">{metric.label}</div>
-              <div className="mt-1 text-sm font-mono text-muted-foreground/60">{metric.sub}</div>
+              <div className="text-6xl lg:text-7xl font-display tracking-tight">
+                <Counter end={m.value} suffix={m.suffix} />
+              </div>
+              <p className="text-lg font-medium">{m.headline}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{m.sub}</p>
             </div>
           ))}
         </div>
