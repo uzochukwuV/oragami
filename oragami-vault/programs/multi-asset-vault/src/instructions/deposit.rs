@@ -1,8 +1,11 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount, Transfer};
-use crate::constants::{ASSET_VAULT_SEED, CREDENTIAL_ACTIVE, CREDENTIAL_SEED, NAV_BPS_DENOMINATOR};
+use crate::constants::{
+    ASSET_VAULT_SEED, CREDENTIAL_ACTIVE, CREDENTIAL_SEED, NAV_BPS_DENOMINATOR,
+    ORAGAMI_VAULT_PROGRAM_ID, TRAVEL_RULE_THRESHOLD,
+};
 use crate::error::VaultError;
-use crate::state::{AssetVault, ComplianceCredential};
+use crate::state::{AssetVault, ComplianceCredential, TravelRuleData};
 
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     // ── Guards ────────────────────────────────────────────────────────────────
@@ -12,7 +15,22 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     require!(amount <= vault.max_deposit, VaultError::DepositTooLarge);
 
     // ── Credential check ──────────────────────────────────────────────────────
-    let cred = &ctx.accounts.credential;
+    let expected_credential_pda = Pubkey::find_program_address(
+        &[CREDENTIAL_SEED, ctx.accounts.depositor.key().as_ref()],
+        &ORAGAMI_VAULT_PROGRAM_ID,
+    )
+    .0;
+    require!(
+        ctx.accounts.credential.key() == expected_credential_pda,
+        VaultError::InvalidCredentialPda
+    );
+    require!(
+        *ctx.accounts.credential.owner == ORAGAMI_VAULT_PROGRAM_ID,
+        VaultError::WrongCredentialProgram
+    );
+    let cred_data_ref = ctx.accounts.credential.try_borrow_data()?;
+    let mut cred_data: &[u8] = &cred_data_ref;
+    let cred = ComplianceCredential::try_deserialize(&mut cred_data)?;
     let now = Clock::get()?.unix_timestamp;
     require!(cred.status == CREDENTIAL_ACTIVE, VaultError::CredentialNotActive);
     require!(cred.expires_at > now, VaultError::CredentialExpired);
@@ -20,6 +38,18 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         cred.wallet == ctx.accounts.depositor.key(),
         VaultError::CredentialWalletMismatch
     );
+
+    // ── Travel Rule check (opt-in per vault) ─────────────────────────────────
+    if vault.travel_rule_required && amount >= TRAVEL_RULE_THRESHOLD {
+        let tr = ctx.accounts
+            .travel_rule_data
+            .as_mut()
+            .ok_or(VaultError::TravelRuleRequired)?;
+        require!(tr.amount == amount, VaultError::InvalidTravelRule);
+        require!(tr.payer == ctx.accounts.depositor.key(), VaultError::InvalidTravelRule);
+        require!(!tr.consumed, VaultError::TravelRuleAlreadyConsumed);
+        tr.consumed = true;
+    }
 
     // ── Compute shares ────────────────────────────────────────────────────────
     let nav = vault.nav_price_bps;
@@ -113,11 +143,16 @@ pub struct Deposit<'info> {
     #[account(mut)]
     pub depositor_share_account: Account<'info, TokenAccount>,
 
+    /// CHECK: validated against oragami-vault credential PDA + owner in handler.
     #[account(
         seeds = [CREDENTIAL_SEED, depositor.key().as_ref()],
-        bump = credential.bump
+        bump,
+        seeds::program = ORAGAMI_VAULT_PROGRAM_ID
     )]
-    pub credential: Account<'info, ComplianceCredential>,
+    pub credential: UncheckedAccount<'info>,
+
+    #[account(mut)]
+    pub travel_rule_data: Option<Account<'info, TravelRuleData>>,
 
     #[account(mut)]
     pub depositor: Signer<'info>,

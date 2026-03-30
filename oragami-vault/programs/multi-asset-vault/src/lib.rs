@@ -15,6 +15,7 @@ pub use instructions::initialize::*;
 pub use instructions::redeem::*;
 pub use instructions::register_asset::*;
 pub use instructions::set_nav::*;
+pub use instructions::travel_rule::*;
 pub use instructions::transfer_shares::*;
 
 declare_id!("6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D");
@@ -22,7 +23,7 @@ declare_id!("6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D");
 #[program]
 pub mod multi_asset_vault {
     use super::*;
-    use crate::instructions::{admin, credential, deposit, initialize, redeem, register_asset, set_nav, transfer_shares};
+    use crate::instructions::{admin, credential, deposit, initialize, redeem, register_asset, set_nav, travel_rule, transfer_shares};
 
     // ── Factory ───────────────────────────────────────────────────────────────
 
@@ -38,8 +39,16 @@ pub mod multi_asset_vault {
         nav_price_bps: u64,
         min_deposit: u64,
         max_deposit: u64,
+        travel_rule_required: bool,
     ) -> Result<()> {
-        register_asset::handler(ctx, ticker, nav_price_bps, min_deposit, max_deposit)
+        register_asset::handler(
+            ctx,
+            ticker,
+            nav_price_bps,
+            min_deposit,
+            max_deposit,
+            travel_rule_required,
+        )
     }
 
     pub fn set_nav(ctx: Context<SetNav>, nav_price_bps: u64) -> Result<()> {
@@ -76,6 +85,14 @@ pub mod multi_asset_vault {
 
     pub fn redeem(ctx: Context<Redeem>, share_amount: u64) -> Result<()> {
         redeem::handler(ctx, share_amount)
+    }
+
+    pub fn init_travel_rule(
+        ctx: Context<InitTravelRule>,
+        amount: u64,
+        nonce_hash: [u8; 32],
+    ) -> Result<()> {
+        travel_rule::handler(ctx, amount, nonce_hash)
     }
 
     /// Transfer share tokens between two credentialed institutions.

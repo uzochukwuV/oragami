@@ -89,6 +89,10 @@ pub mod oragami_vault {
         ctx: Context<InitializeVault>,
         params: InitializeVaultParams,
     ) -> Result<()> {
+        require!(
+            params.min_deposit <= params.max_deposit,
+            ErrorCode::DepositTooSmall
+        );
         let vs = &mut ctx.accounts.vault_state;
         vs.bump = ctx.bumps.vault_state;
         vs.cvault_mint = ctx.accounts.cvault_mint.key();
@@ -318,12 +322,15 @@ pub mod oragami_vault {
         if params.amount >= TRAVEL_RULE_THRESHOLD {
             let tr = ctx.accounts
                 .travel_rule_data
-                .as_ref()
+                .as_mut()
                 .ok_or(ErrorCode::TravelRuleRequired)?;
             // Verify the travel rule record covers this exact deposit amount
             require!(tr.amount == params.amount, ErrorCode::InvalidTravelRule);
             // Verify the payer matches the travel rule originator
             require!(tr.payer == ctx.accounts.payer.key(), ErrorCode::InvalidTravelRule);
+            // Single-use Travel Rule records only
+            require!(!tr.consumed, ErrorCode::InvalidTravelRule);
+            tr.consumed = true;
         }
 
         // --- USDC transfer user → vault ---
@@ -420,6 +427,7 @@ pub mod oragami_vault {
         tr.amount = params.amount;
         tr.submitted_at = Clock::get()?.unix_timestamp;
         tr.payer = ctx.accounts.payer.key();
+        tr.consumed = false;
         msg!(
             "Travel Rule data submitted for {} USDC (payer: {})",
             params.amount,
@@ -778,6 +786,9 @@ pub mod oragami_vault {
         }
         if let Some(b) = params.usx_allocation_bps {
             require!(b <= 10_000, ErrorCode::InvalidAllocation);
+            if let Some(mandate) = &ctx.accounts.vault_mandate {
+                require!(b <= mandate.max_usx_allocation_bps, ErrorCode::MandateBreached);
+            }
             vs.usx_allocation_bps = b;
         }
         if let Some(a) = params.apy_bps {
@@ -1046,11 +1057,12 @@ pub struct TravelRuleData {
     pub compliance_hash: [u8; 32],       // 32  — SHA-256 of full Travel Rule packet
     pub amount: u64,                     // 8   — must == deposit amount
     pub submitted_at: i64,               // 8
+    pub consumed: bool,                  // 1   — single-use replay guard
 }
 
 impl TravelRuleData {
-    pub const SIZE: usize = 8 + 1 + 32 + 64 + 34 + 64 + 32 + 8 + 8;
-    // = 251 bytes
+    pub const SIZE: usize = 8 + 1 + 32 + 64 + 34 + 64 + 32 + 8 + 8 + 1;
+    // = 252 bytes
 }
 
 // ============================================================================
@@ -1286,6 +1298,7 @@ pub struct Deposit<'info> {
     /// Optional travel rule PDA — required iff amount >= TRAVEL_RULE_THRESHOLD.
     /// Payer ownership and amount integrity are verified inside the instruction
     /// handler (tr.payer == payer and tr.amount == params.amount).
+    #[account(mut)]
     pub travel_rule_data: Option<Account<'info, TravelRuleData>>,
 
     #[account(mut)]
@@ -1422,6 +1435,13 @@ pub struct UpdateConfig<'info> {
 
     #[account(address = vault_state.authority)]
     pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [VAULT_MANDATE_SEED, vault_state.key().as_ref()],
+        bump = vault_mandate.bump,
+        constraint = vault_mandate.vault == vault_state.key() @ ErrorCode::InvalidMandate
+    )]
+    pub vault_mandate: Option<Account<'info, VaultMandate>>,
 }
 
 #[derive(Accounts)]

@@ -5,7 +5,6 @@ use crate::error::VaultError;
 use crate::state::AssetVault;
 
 pub fn handler(ctx: Context<Redeem>, share_amount: u64) -> Result<()> {
-    require!(!ctx.accounts.asset_vault.paused, VaultError::VaultPaused);
     require!(share_amount > 0, VaultError::ZeroShares);
 
     let vault = &ctx.accounts.asset_vault;

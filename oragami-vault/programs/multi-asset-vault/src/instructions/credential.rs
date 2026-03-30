@@ -29,6 +29,7 @@ pub fn issue_handler(
     cred.tier = tier;
     cred.kyc_level = kyc_level;
     cred.aml_coverage = aml_coverage;
+    cred.attestation_hash = [0u8; 32];
     cred.issued_at = now;
     cred.expires_at = expires_at;
     cred.status = CREDENTIAL_ACTIVE;

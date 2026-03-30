@@ -16,6 +16,10 @@ pub const VAULT_TOKEN_SEED: &[u8] = b"vault_token";
 
 #[constant]
 pub const CREDENTIAL_SEED: &[u8] = b"credential";
+#[constant]
+pub const TRAVEL_RULE_SEED: &[u8] = b"travel_rule";
+pub const ORAGAMI_VAULT_PROGRAM_ID: Pubkey =
+    pubkey!("ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP");
 
 // ─── NAV ─────────────────────────────────────────────────────────────────────
 
