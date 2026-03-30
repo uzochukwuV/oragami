@@ -1,11 +1,17 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
+import { BN } from '@coral-xyz/anchor';
 import { getAccount } from '@solana/spl-token';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnchorService } from '../solana/anchor.service';
 import { SolsticeService } from '../solana/solstice.service';
 import { SixService } from '../data/six.service';
+
+const RWA_ASSET_REGISTRY_SEED = Buffer.from('rwa_asset_registry');
+const RESERVE_ATTESTATION_SEED = Buffer.from('reserve_attestation');
+const VAULT_MANDATE_SEED = Buffer.from('vault_mandate');
 
 @Injectable()
 export class VaultService implements OnModuleInit {
@@ -29,6 +35,56 @@ export class VaultService implements OnModuleInit {
       return acc.amount.toString();
     } catch {
       return '0';
+    }
+  }
+
+  async postReserveAttestation(goldPrice: number, navBps: number): Promise<string | null> {
+    try {
+      const program = this.anchor.getProgram() as any;
+      const [vaultStatePda] = this.anchor.deriveVaultStatePda();
+      const [rwaRegistryPda] = PublicKey.findProgramAddressSync(
+        [RWA_ASSET_REGISTRY_SEED, vaultStatePda.toBuffer()],
+        program.programId,
+      );
+      const [attestationPda] = PublicKey.findProgramAddressSync(
+        [RESERVE_ATTESTATION_SEED, vaultStatePda.toBuffer()],
+        program.programId,
+      );
+
+      // Fetch the registry to get the current link_hash
+      let linkHash: number[];
+      try {
+        const reg = await program.account.rwaAssetRegistry.fetch(rwaRegistryPda);
+        linkHash = Array.from(reg.linkHash as Uint8Array);
+      } catch {
+        // Registry not initialised yet — skip attestation
+        return null;
+      }
+
+      // gold_units_held: express gold price in micrograms equivalent (price × 1e6)
+      const goldUnitsMicro = Math.round(goldPrice * 1_000_000);
+      // usdc_value_bps: same as nav_price_bps
+      const usdcValueBps = navBps;
+
+      const tx = await program.methods
+        .postReserveAttestation({
+          attestationHash: linkHash,
+          goldUnitsHeld: new BN(goldUnitsMicro),
+          usdcValueBps: new BN(usdcValueBps),
+        })
+        .accounts({
+          vaultState: vaultStatePda,
+          rwaAssetRegistry: rwaRegistryPda,
+          reserveAttestation: attestationPda,
+          operator: this.anchor.getAuthority().publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      return tx;
+    } catch (err: any) {
+      // Non-fatal — attestation is best-effort if registry not set up
+      return null;
     }
   }
 

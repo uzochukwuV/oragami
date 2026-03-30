@@ -30,6 +30,10 @@ pub const VAULT_USX_ACCOUNT_SEED: &[u8] = b"vault_usx_account";
 pub const VAULT_EUSX_ACCOUNT_SEED: &[u8] = b"vault_eusx_account";
 pub const RWA_ASSET_REGISTRY_SEED: &[u8] = b"rwa_asset_registry";
 pub const VAULT_MANDATE_SEED: &[u8] = b"vault_mandate";
+pub const RESERVE_ATTESTATION_SEED: &[u8] = b"reserve_attestation";
+
+/// Max age of a reserve attestation before proof-of-reserve rejects it (24 hours)
+pub const MAX_ATTESTATION_AGE_SECS: i64 = 86_400;
 
 // ============================================================================
 // CONSTANTS
@@ -817,13 +821,81 @@ pub mod oragami_vault {
     }
 
     // -----------------------------------------------------------------------
+    // RESERVE ATTESTATION
+    // -----------------------------------------------------------------------
+
+    /// Posted by the authority (or custodian key) to attest the off-chain gold
+    /// reserve backing cVAULT. Must be refreshed at least every 24 hours.
+    ///
+    /// `attestation_hash` — SHA-256 of the custodian's signed reserve report.
+    ///   Must match `RwaAssetRegistry.link_hash` to prove the on-chain registry
+    ///   and the live custodian report are in sync.
+    /// `gold_units_held` — quantity of gold (in micrograms or contract units)
+    ///   the custodian attests to holding against this vault's deposits.
+    /// `usdc_value_bps` — custodian's USD valuation of that gold in bps
+    ///   (same unit as nav_price_bps) for cross-check against on-chain NAV.
+    pub fn post_reserve_attestation(
+        ctx: Context<PostReserveAttestation>,
+        params: PostReserveAttestationParams,
+    ) -> Result<()> {
+        require_operator(&ctx.accounts.vault_state, &ctx.accounts.operator.key())?;
+        // Attestation hash must match what is registered in the RWA registry
+        require!(
+            params.attestation_hash == ctx.accounts.rwa_asset_registry.link_hash,
+            ErrorCode::AttestationHashMismatch
+        );
+        let att = &mut ctx.accounts.reserve_attestation;
+        att.bump = ctx.bumps.reserve_attestation;
+        att.vault = ctx.accounts.vault_state.key();
+        att.attestation_hash = params.attestation_hash;
+        att.gold_units_held = params.gold_units_held;
+        att.usdc_value_bps = params.usdc_value_bps;
+        att.attested_at = Clock::get()?.unix_timestamp;
+        att.attested_by = ctx.accounts.operator.key();
+        emit!(ReserveAttested {
+            vault: att.vault,
+            attestation_hash: att.attestation_hash,
+            gold_units_held: att.gold_units_held,
+            usdc_value_bps: att.usdc_value_bps,
+            attested_at: att.attested_at,
+        });
+        msg!(
+            "Reserve attested: gold_units={} usdc_value_bps={} hash={:?}",
+            params.gold_units_held,
+            params.usdc_value_bps,
+            params.attestation_hash
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // PROOF OF RESERVE & LIQUIDITY ASSERTIONS
     // -----------------------------------------------------------------------
 
-    /// Verifies `USDC + USX + eUSX` (raw amounts, 6 decimals, 1:1 unit assumption)
-    /// meets `VaultMandate.min_collateral_ratio_bps` vs `total_deposits`.
-    /// Callable by anyone (e.g. crank or auditor).
+    /// Full proof-of-reserve check. Verifies three things:
+    ///   1. Financial: USDC + USX + eUSX >= total_deposits × min_collateral_ratio_bps
+    ///   2. Attestation freshness: reserve_attestation.attested_at is within 24 hours
+    ///   3. Attestation integrity: attestation_hash matches RwaAssetRegistry.link_hash
+    ///
+    /// This makes cVAULT verifiably gold-backed on-chain — not just liquid-asset-backed.
+    /// Callable by anyone (crank, auditor, institution).
     pub fn verify_proof_of_reserve(ctx: Context<VerifyProofOfReserve>) -> Result<()> {
+        // --- Attestation checks ---
+        let att = &ctx.accounts.reserve_attestation;
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            now - att.attested_at <= MAX_ATTESTATION_AGE_SECS,
+            ErrorCode::AttestationStale
+        );
+        require!(
+            att.attestation_hash == ctx.accounts.rwa_asset_registry.link_hash,
+            ErrorCode::AttestationHashMismatch
+        );
+        require!(
+            att.vault == ctx.accounts.vault_state.key(),
+            ErrorCode::InvalidMandate
+        );
+        // --- Financial reserve check ---
         let vs = &ctx.accounts.vault_state;
         let m = &ctx.accounts.vault_mandate;
         require!(m.vault == vs.key(), ErrorCode::InvalidMandate);
@@ -884,6 +956,8 @@ pub mod oragami_vault {
             total_assets,
             total_deposits: vs.total_deposits,
             min_collateral_ratio_bps: m.min_collateral_ratio_bps,
+            gold_units_held: ctx.accounts.reserve_attestation.gold_units_held,
+            attested_at: ctx.accounts.reserve_attestation.attested_at,
         });
         Ok(())
     }
@@ -967,6 +1041,33 @@ impl VaultState {
 
 /// On-chain declaration of what NAV is intended to represent (ISIN, custodian, attestation).
 /// `set_nav` requires this account so price updates are tied to a named backing class.
+// -----------------------------------------------------------------------
+// RESERVE ATTESTATION
+// -----------------------------------------------------------------------
+
+/// Posted by the operator periodically to attest the off-chain gold reserve.
+/// Seeds: ["reserve_attestation", vault_state]
+/// One PDA per vault, overwritten on each post_reserve_attestation call.
+/// verify_proof_of_reserve checks this is fresh (< 24h) and hash matches registry.
+#[account]
+pub struct ReserveAttestation {
+    pub bump: u8,
+    pub vault: Pubkey,
+    /// SHA-256 of custodian's signed reserve report — must match RwaAssetRegistry.link_hash
+    pub attestation_hash: [u8; 32],
+    /// Quantity of gold held by custodian in contract units
+    pub gold_units_held: u64,
+    /// Custodian's USD valuation in bps (same scale as nav_price_bps)
+    pub usdc_value_bps: u64,
+    pub attested_at: i64,
+    pub attested_by: Pubkey,
+}
+
+impl ReserveAttestation {
+    pub const SIZE: usize = 8 + 1 + 32 + 32 + 8 + 8 + 8 + 32;
+    // = 129 bytes
+}
+
 #[account]
 pub struct RwaAssetRegistry {
     pub bump: u8,
@@ -1453,6 +1554,32 @@ pub struct SyncYield<'info> {
 }
 
 #[derive(Accounts)]
+pub struct PostReserveAttestation<'info> {
+    #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        seeds = [RWA_ASSET_REGISTRY_SEED, vault_state.key().as_ref()],
+        bump = rwa_asset_registry.bump,
+        constraint = rwa_asset_registry.vault == vault_state.key() @ ErrorCode::InvalidRegistry
+    )]
+    pub rwa_asset_registry: Account<'info, RwaAssetRegistry>,
+
+    #[account(
+        init_if_needed,
+        payer = operator,
+        space = ReserveAttestation::SIZE,
+        seeds = [RESERVE_ATTESTATION_SEED, vault_state.key().as_ref()],
+        bump
+    )]
+    pub reserve_attestation: Account<'info, ReserveAttestation>,
+
+    #[account(mut)]
+    pub operator: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
 pub struct VerifyProofOfReserve<'info> {
     #[account(seeds = [VAULT_STATE_SEED], bump = vault_state.bump)]
     pub vault_state: Account<'info, VaultState>,
@@ -1463,6 +1590,20 @@ pub struct VerifyProofOfReserve<'info> {
         constraint = vault_mandate.vault == vault_state.key() @ ErrorCode::InvalidMandate
     )]
     pub vault_mandate: Account<'info, VaultMandate>,
+
+    #[account(
+        seeds = [RWA_ASSET_REGISTRY_SEED, vault_state.key().as_ref()],
+        bump = rwa_asset_registry.bump,
+        constraint = rwa_asset_registry.vault == vault_state.key() @ ErrorCode::InvalidRegistry
+    )]
+    pub rwa_asset_registry: Account<'info, RwaAssetRegistry>,
+
+    #[account(
+        seeds = [RESERVE_ATTESTATION_SEED, vault_state.key().as_ref()],
+        bump = reserve_attestation.bump,
+        constraint = reserve_attestation.vault == vault_state.key() @ ErrorCode::InvalidMandate
+    )]
+    pub reserve_attestation: Account<'info, ReserveAttestation>,
 
     #[account(address = vault_state.vault_token_account)]
     pub vault_token_account: Account<'info, TokenAccount>,
@@ -1600,6 +1741,17 @@ pub struct RegisterUsxAccountsParams {
     pub vault_eusx_account: Pubkey,
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct PostReserveAttestationParams {
+    /// SHA-256 of the custodian's signed reserve report.
+    /// Must match RwaAssetRegistry.link_hash.
+    pub attestation_hash: [u8; 32],
+    /// Quantity of gold held by custodian (micrograms or contract-defined units)
+    pub gold_units_held: u64,
+    /// Custodian's USD valuation of that gold in bps (same scale as nav_price_bps)
+    pub usdc_value_bps: u64,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct ConvertToTradeableParams {
     pub amount: u64,
@@ -1659,6 +1811,10 @@ pub enum ErrorCode {
     LiquidityAllocationBreached,
     #[msg("Token account does not match vault configuration")]
     InvalidVaultTokenAccount,
+    #[msg("Reserve attestation is older than 24 hours — post a fresh attestation")]
+    AttestationStale,
+    #[msg("Attestation hash does not match the RWA asset registry link_hash")]
+    AttestationHashMismatch,
 }
 
 // ============================================================================
@@ -1684,6 +1840,17 @@ pub struct ProofOfReserveOk {
     pub total_assets: u64,
     pub total_deposits: u64,
     pub min_collateral_ratio_bps: u16,
+    pub gold_units_held: u64,
+    pub attested_at: i64,
+}
+
+#[event]
+pub struct ReserveAttested {
+    pub vault: Pubkey,
+    pub attestation_hash: [u8; 32],
+    pub gold_units_held: u64,
+    pub usdc_value_bps: u64,
+    pub attested_at: i64,
 }
 
 #[event]

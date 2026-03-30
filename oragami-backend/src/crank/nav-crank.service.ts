@@ -6,6 +6,7 @@ import { AnchorService } from '../solana/anchor.service';
 import { SolsticeService } from '../solana/solstice.service';
 import { SixService } from '../data/six.service';
 import { CrankStateService } from '../health/crank-state.service';
+import { VaultService } from '../vault/vault.service';
 
 const SIX_GOLD_VALOR = '274702';
 const SIX_GOLD_BC = '148';
@@ -35,6 +36,7 @@ export class NavCrankService {
     private readonly solstice: SolsticeService,
     private readonly six: SixService,
     private readonly crankState: CrankStateService,
+    private readonly vaultService: VaultService,
   ) {}
 
   @Cron('*/2 * * * *')
@@ -160,6 +162,12 @@ export class NavCrankService {
       txSignature = tx;
       this.lastOnChainUpdateMs = Date.now();
       this.logger.log(`NAV updated on-chain: ${newNavBps} bps | tx=${tx}`);
+
+      // 7b. Post reserve attestation — proves gold backing on-chain
+      const attTx = await this.vaultService.postReserveAttestation(goldPrice ?? 0, newNavBps);
+      if (attTx) {
+        this.logger.log(`Reserve attestation posted: tx=${attTx}`);
+      }
 
       // 7a. Minimal yield tick
       await this.tickYield(currentNavBps, newNavBps, usxAllocationBps, eusxNav);

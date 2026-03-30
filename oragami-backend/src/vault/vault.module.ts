@@ -9,5 +9,6 @@ import { DataModule } from '../data/data.module';
   imports: [PrismaModule, SolanaModule, DataModule],
   controllers: [VaultController],
   providers: [VaultService],
+  exports: [VaultService],
 })
 export class VaultModule {}
