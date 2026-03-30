@@ -5,10 +5,11 @@ import { useEffect, useRef, useState } from "react";
 const steps = [
   {
     number: "I",
-    title: "Get credentialed",
+    title: "Get credentialed once",
     description:
-      "The vault authority issues a soulbound ComplianceCredential PDA to your institution wallet. KYC level, AML score, jurisdiction, and expiry are stored on-chain. No credential — no entry. Enforced at the contract level, not off-chain.",
+      "The vault authority issues a soulbound ComplianceCredential PDA to your institution wallet. KYC level, AML score, jurisdiction, and expiry stored on-chain. One credential gates both the yield vault and the custody vault. No credential — no entry. Enforced at the contract level.",
     code: `// Soulbound on-chain credential
+// Seeds: ["credential", wallet] — one per institution
 await program.methods
   .issueCredential(
     toBytes64("AMINA Bank AG"),
@@ -19,9 +20,8 @@ await program.methods
     expiresAt
   )
   .accounts({
-    factory: factoryPda,
-    credential: credentialPda,
-    wallet: institution.publicKey,
+    vaultState: vaultStatePda,
+    credential: credentialPda, // derived from wallet
     authority: vaultAuthority,
   })
   .rpc();
@@ -30,41 +30,72 @@ await program.methods
 // ✓ KYC level 3 (full)
 // ✓ AML score 95/100
 // ✓ Jurisdiction: CH
-// ✓ Expires: 2027-03-29`,
+// ✓ Expires: 2027-03-29
+// ✓ Gates: yield vault + custody vault`,
   },
   {
     number: "II",
-    title: "Deposit assets, vault takes custody",
+    title: "Deposit USDC, earn Gold + USX yield",
     description:
-      "Institution A deposits tokenized Gold. The vault PDA takes custody of the asset tokens — they move on-chain into the vault's token account. VAULT-GOLD shares are minted to the institution at the current SIX Exchange NAV price. The vault is now the custodian.",
-    code: `// Institution A deposits 1000 GOLD-mock
+      "Deposit USDC into the yield vault. Receive cVAULT priced against a live basket: 50% Gold + 30% CHF/USD from SIX Exchange + 20% Solstice eUSX. 70% of USDC routes to Solstice USX for carry yield. NAV updates on-chain every 2 minutes from authenticated SIX mTLS feed.",
+    code: `// Deposit 10,000 USDC into yield vault
+// Current NAV: $1.043 (gold up 4.3%)
+// cVAULT received = 10000 * 10000 / 10430
+//                 = 9587.73 cVAULT
+
+await program.methods
+  .deposit({ amount: new BN(10_000_000_000), nonce })
+  .accounts({
+    vaultState,
+    cvaultMint,
+    vaultTokenAccount,      // ← USDC enters vault
+    payerDepositAccount,    // ← USDC leaves here
+    payerCvaultAccount,     // ← cVAULT arrives here
+    investorCredential,     // ← verified on-chain
+  })
+  .rpc();
+
+// On-chain:
+// ✓ Credential: active, not expired
+// ✓ 10,000 USDC in vault
+// ✓ 7,000 USDC → Solstice USX (70% alloc)
+// ✓ 9,587.73 cVAULT minted at NAV $1.043
+// ✓ Earning: gold NAV + USX carry yield`,
+  },
+  {
+    number: "III",
+    title: "Deposit tokenized assets, vault holds custody",
+    description:
+      "Deposit tokenized Gold into the custody vault. The vault PDA takes on-chain custody of the asset tokens. VAULT-GOLD shares are minted at the current SIX Exchange NAV. The vault is now the custodian — the asset never leaves until redemption.",
+    code: `// Deposit 1,000 GOLD-mock into custody vault
 // Current NAV: $1.00 per share
-// Vault receives: 1000 GOLD-mock tokens
-// Institution A receives: 1000 VAULT-GOLD
+// Vault receives: 1,000 GOLD-mock tokens
+// Institution receives: 1,000 VAULT-GOLD
 
 await program.methods
   .deposit(new BN(1_000_000_000))
   .accounts({
     assetVault: goldVaultPda,
     shareMint: vaultGoldMint,
-    vaultTokenAccount,      // ← vault holds gold
+    vaultTokenAccount,      // ← gold enters custody
     depositorAssetAccount,  // ← gold leaves here
-    depositorShareAccount,  // ← shares arrive here
+    depositorShareAccount,  // ← VAULT-GOLD arrives
     credential: credentialPda,
   })
   .rpc();
 
 // On-chain:
 // ✓ Credential verified
-// ✓ 1000 GOLD-mock in vault custody
-// ✓ 1000 VAULT-GOLD minted to A`,
+// ✓ 1,000 GOLD-mock in vault custody
+// ✓ 1,000 VAULT-GOLD minted to institution
+// ✓ Vault is sole custodian`,
   },
   {
-    number: "III",
-    title: "Exchange positions through the vault",
+    number: "IV",
+    title: "Transfer positions — both sides verified",
     description:
-      "Institution A transfers VAULT-GOLD to Institution B. The vault validates both credentials before the transfer executes — sender and receiver must both be KYC-cleared. The underlying gold never moves. The vault remains custodian throughout. Zero counterparty risk.",
-    code: `// Institution A sells position to B
+      "Institution A transfers VAULT-GOLD to Institution B. The vault verifies both credentials on-chain before any token moves — sender active, receiver active, neither expired. The underlying gold never moves. The vault remains custodian. Zero counterparty risk. Full audit trail on-chain.",
+    code: `// Institution A transfers 500 VAULT-GOLD to B
 // Both must hold active credentials
 // Underlying gold stays in vault custody
 
@@ -81,36 +112,11 @@ await program.methods
   .rpc();
 
 // On-chain:
-// ✓ Both credentials verified
+// ✓ Sender credential: active, not expired
+// ✓ Receiver credential: active, not expired
 // ✓ 500 VAULT-GOLD: A → B
-// ✓ Gold stays in vault
+// ✓ Gold stays in vault — vault is CCP
 // ✓ TransferMade event emitted`,
-  },
-  {
-    number: "IV",
-    title: "Redeem at NAV, vault releases custody",
-    description:
-      "Institution B redeems VAULT-GOLD shares. The vault burns the shares and releases the underlying gold tokens back to the institution at the current NAV price. If gold appreciated since deposit, the institution receives more tokens per share. No credential check on exit — institutions can always leave.",
-    code: `// Institution B redeems 500 VAULT-GOLD
-// NAV has moved: $1.00 → $1.05 (+5%)
-// 500 shares × 1.05 = 525 GOLD-mock returned
-
-await program.methods
-  .redeem(new BN(500_000_000))
-  .accounts({
-    assetVault: goldVaultPda,
-    shareMint: vaultGoldMint,
-    vaultTokenAccount,      // ← gold leaves vault
-    redeemerShareAccount,   // ← shares burned
-    redeemerAssetAccount,   // ← gold arrives here
-  })
-  .rpc();
-
-// On-chain:
-// ✓ 500 VAULT-GOLD burned
-// ✓ 525 GOLD-mock released to B
-// ✓ RedeemMade event emitted
-// ✓ 5% gain captured at NAV`,
   },
 ];
 
@@ -229,7 +235,9 @@ export function HowItWorksSection() {
               </div>
               <div className="px-6 py-4 border-t border-background/10 flex items-center gap-3">
                 <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-xs font-mono text-background/40">Devnet · 6Mbzwuw8...{` `}multi-asset-vault</span>
+                <span className="text-xs font-mono text-background/40">
+                  {activeStep <= 1 ? "ihUcHpWk... oragami-vault" : "6Mbzwuw8... multi-asset-vault"}
+                </span>
               </div>
             </div>
           </div>

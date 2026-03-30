@@ -6,14 +6,114 @@ Institutional RWA infrastructure on Solana. Two Anchor programs, one compliance 
 
 ---
 
-## What It Is
+## The Products
 
-Oragami solves two problems institutions have with on-chain RWAs:
+### Product 1 — Yield Vault (`oragami-vault`)
 
-1. **Yield on collateral** — deposit USDC, receive cVAULT priced against a live Gold/CHF/eUSX basket via SIX Exchange, earn delta-neutral yield via Solstice USX
-2. **Compliant position transfers** — deposit tokenized assets into a custody vault, transfer positions between institutions with both sides verified on-chain before any token moves
+Institutions deposit USDC and receive **cVAULT** — a NAV-priced token that captures two yield sources simultaneously:
 
-Both products share one soulbound compliance credential PDA. One onboarding flow gates access to everything.
+**Gold NAV appreciation** — cVAULT is priced against a live basket:
+- 50% Gold (XAU/USD) from SIX Exchange via authenticated mTLS
+- 30% CHF/USD from SIX Exchange via authenticated mTLS
+- 20% Solstice eUSX NAV
+
+**USX carry yield** — 70% of deposited USDC is allocated to Solstice USX. A backend crank accrues yield daily on-chain into `pending_yield`. The vault holds both the USDC liquidity buffer and the USX position.
+
+```
+Institution deposits 10,000 USDC
+        ↓
+NAV = $1.043 (gold up 4.3% since baseline)
+cVAULT minted = 10,000 × 10,000 / 10,430 = 9,587.73 cVAULT
+        ↓
+7,000 USDC → Solstice USX (70% allocation, earning ~5% APY)
+3,000 USDC → liquidity buffer (30%, available for redemptions)
+        ↓
+cVAULT holder earns:
+  · Gold price appreciation reflected in NAV every 2 minutes
+  · USX carry yield accrued daily on-chain
+```
+
+NAV is computed by the backend crank from live SIX Exchange data and written on-chain via `set_nav`. Hard guard: max ±10% change per crank run to prevent manipulation.
+
+---
+
+### Product 2 — Custody Vault (`multi-asset-vault`)
+
+A factory pattern custody vault. Institutions deposit tokenized assets (Gold, Silver, T-bills) directly. The vault PDA holds on-chain custody throughout the position lifecycle.
+
+```
+Institution A deposits 1,000 GOLD-mock
+        ↓
+Vault PDA takes custody of 1,000 GOLD-mock tokens
+VAULT-GOLD shares minted to Institution A at current NAV
+        ↓
+Institution A transfers 500 VAULT-GOLD to Institution B
+        ↓
+Vault verifies BOTH credentials on-chain before transfer executes:
+  · Sender: KYC active, not expired, wallet binding confirmed
+  · Receiver: KYC active, not expired, wallet binding confirmed
+        ↓
+500 VAULT-GOLD moves A → B
+Underlying gold stays in vault custody throughout
+        ↓
+Institution B redeems 500 VAULT-GOLD
+Vault burns shares, releases gold at current NAV
+If NAV moved $1.00 → $1.05: B receives 525 GOLD-mock
+```
+
+The vault is the central counterparty. No bilateral counterparty risk between institutions. The underlying asset never moves until redemption.
+
+---
+
+## Compliance Architecture
+
+Both products share one compliance layer. One onboarding flow gates everything.
+
+### Soulbound Credential PDA
+
+Seeds: `["credential", wallet]` — one per institution, non-transferable.
+
+Stores on-chain:
+- Institution name (legal entity, 64 bytes)
+- Jurisdiction (ISO 3166, e.g. `CH`)
+- KYC level (1 = basic, 2 = enhanced, 3 = full)
+- AML coverage score (0–100)
+- Tier (1 = retail, 2 = professional, 3 = institutional)
+- Attestation hash (SHA-256 of off-chain KYC docs)
+- Issued at / expires at timestamps
+- Status (pending / active / restricted / revoked)
+
+The deposit instruction derives the credential PDA from `payer.key()` — you cannot pass a fake credential. Anchor enforces this at the account constraint level.
+
+### FATF Travel Rule
+
+Deposits ≥ 1,000 USDC require a `TravelRuleData` PDA to be initialised before the deposit call.
+
+Seeds: `["travel_rule", payer, nonce_hash]`
+
+Stores: originator name, originator account (IBAN), beneficiary name, compliance hash (SHA-256 of full Travel Rule packet), amount, submitted_at, payer, **consumed flag**.
+
+The deposit instruction verifies:
+1. `tr.payer == payer` — record belongs to this depositor
+2. `tr.amount == params.amount` — record covers this exact deposit
+3. `tr.consumed == false` — prevents replay of the same record
+
+On verification, `consumed` is set to `true`. The PDA remains on-chain as an immutable audit record.
+
+### Transfer Hook (cVAULT-TRADE)
+
+`cvault-transfer-hook` (`965gkqvN...`) is a Token-2022 transfer hook on cVAULT-TRADE. Every secondary market transfer triggers an on-chain compliance check. Non-whitelisted wallets are rejected at the protocol layer — no off-chain bypass possible.
+
+### Dual-Credential Transfer (multi-asset-vault)
+
+`transfer_shares` verifies both sender and receiver credentials on-chain before any token moves:
+
+```rust
+// Sender credential: seeds = ["credential", sender.key()]
+// Receiver credential: seeds = ["credential", receiver_share_account.owner]
+// Both must be status == ACTIVE and not expired
+// Only then does token::transfer execute
+```
 
 ---
 
@@ -21,14 +121,14 @@ Both products share one soulbound compliance credential PDA. One onboarding flow
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        Frontend (Next.js 16, :3000)         │
+│                    Frontend (Next.js 16, :3000)              │
 │  /app          — yield vault dashboard, NAV sparkline        │
-│  /app/vaults   — asset custody vaults, deposit + transfer    │
+│  /app/vaults   — custody vaults, deposit + transfer          │
 │  /onboard      — credential issuance flow                    │
 └────────────────────────┬────────────────────────────────────┘
                          │ REST (polling 15s)
 ┌────────────────────────▼────────────────────────────────────┐
-│                     Backend (NestJS, :3210)                  │
+│                   Backend (NestJS, :3210)                    │
 │  NAV crank     — SIX mTLS → compute basket → set_nav CPI    │
 │  Credentials   — issue / verify / revoke on-chain PDAs       │
 │  Deposits      — preflight, travel rule, index               │
@@ -43,9 +143,9 @@ Both products share one soulbound compliance credential PDA. One onboarding flow
 │  VaultState PDA │                  │  Factory PDA             │
 │  cVAULT mint    │                  │  AssetVault PDAs         │
 │  USDC custody   │                  │  VAULT-GOLD / VAULT-SILVER│
-│  Credential PDAs│                  │  Credential PDAs         │
-│  TravelRule PDAs│                  │  transfer_shares         │
-└─────────────────┘                  └──────────────────────────┘
+│  Credential PDAs│◄─────────────────│  reads credentials from  │
+│  TravelRule PDAs│  cross-program   │  oragami-vault program   │
+└─────────────────┘  credential read └──────────────────────────┘
                                               │ Token-2022
                                      ┌────────▼────────────────┐
                                      │  cvault-transfer-hook    │
@@ -67,13 +167,13 @@ NAV-priced yield vault. Institutions deposit USDC, receive cVAULT at live NAV.
 | `initialize_vault` | Creates VaultState PDA, mints cVAULT mint |
 | `issue_credential` | Issues soulbound ComplianceCredential PDA for a wallet |
 | `revoke_credential` | Sets credential status to revoked |
-| `deposit` | Credential gate + travel rule gate → transfer USDC → mint cVAULT at NAV |
 | `init_travel_rule` | Creates TravelRuleData PDA required for deposits ≥ 1,000 USDC |
-| `set_nav` | Updates `nav_price_bps` on VaultState, requires RwaAssetRegistry |
-| `process_yield` | Accrues daily yield into `pending_yield` |
+| `deposit` | Credential gate + travel rule gate (with consumed flag) → transfer USDC → mint cVAULT at NAV |
+| `set_nav` | Updates `nav_price_bps` on VaultState, requires RwaAssetRegistry, operator-only |
+| `process_yield` | Accrues daily yield into `pending_yield` based on USX allocation × APY |
 | `distribute_yield` | Resets `pending_yield`, emits YieldDistributed event |
-| `redeem` | Burns cVAULT, returns USDC at current NAV |
-| `convert_to_tradeable` | Burns cVAULT, mints cVAULT-TRADE 1:1 |
+| `redeem` | Burns cVAULT, returns USDC at current NAV. No credential check on exit. |
+| `convert_to_tradeable` | Burns cVAULT, mints cVAULT-TRADE 1:1 for secondary market |
 | `verify_proof_of_reserve` | Checks `total_assets × 10000 ≥ total_deposits × min_collateral_ratio_bps` |
 | `initialize_rwa_asset_registry` | On-chain RWA backing metadata (ISIN, custodian, attestation hash) |
 | `initialize_vault_mandate` | Risk envelope: liquidity buffer, max USX allocation, collateral ratio |
@@ -87,11 +187,11 @@ navBps   = round(navFloat × 10_000)
 goldFactor = currentGoldPrice / baselineGoldPrice
 chfFactor  = currentChfUsd   / baselineChfUsd
 ```
-Baseline is set on first successful SIX fetch. NAV starts at 10,000 bps ($1.00) and drifts with real market prices. Hard guard: max ±1,000 bps change per crank run.
+Baseline is set on first successful SIX fetch. NAV starts at 10,000 bps ($1.00) and drifts with real market prices. Hard guard: max ±10% change per crank run.
 
 **Credential PDA** — seeds `["credential", wallet]`. One per institution. Non-transferable. Required account on `deposit` — Anchor derives it from `payer.key()`, so you cannot pass a fake credential.
 
-**Travel Rule PDA** — seeds `["travel_rule", payer, nonce_hash]`. Required for deposits ≥ 1,000 USDC. Program checks `tr.amount == params.amount` and `tr.payer == payer` inside the handler.
+**Travel Rule PDA** — seeds `["travel_rule", payer, nonce_hash]`. Required for deposits ≥ 1,000 USDC. Program checks `tr.amount == params.amount`, `tr.payer == payer`, and `tr.consumed == false` inside the handler. Sets `consumed = true` on use — single-use, replay-proof.
 
 ---
 
@@ -102,13 +202,14 @@ Factory pattern custody vault. One program, unlimited asset vaults. GOLD and SIL
 | Instruction | What it does |
 |---|---|
 | `initialize_factory` | Creates Factory PDA with fee config |
-| `register_asset` | Creates AssetVault PDA for a new asset mint |
+| `register_asset` | Creates AssetVault PDA, share mint PDA, vault token account PDA for a new asset |
 | `issue_credential` | Issues ComplianceCredential PDA on this program |
 | `revoke_credential` | Revokes credential |
 | `deposit` | Credential gate → transfer asset tokens into vault PDA → mint share tokens at NAV |
-| `redeem` | Burns share tokens → returns asset tokens at NAV |
-| `set_nav` | Updates NAV for a specific asset vault |
-| `transfer_shares` | **Both** sender and receiver credentials verified on-chain → share tokens move, underlying asset stays in vault |
+| `redeem` | Burns share tokens → returns asset tokens at NAV. No credential check on exit. |
+| `set_nav` | Updates NAV for a specific asset vault, authority-only |
+| `transfer_shares` | Both sender and receiver credentials verified on-chain → share tokens move, underlying asset stays in vault |
+| `pause_vault` | Emergency stop for a specific vault. Blocks deposits, redemptions remain open. |
 
 **`transfer_shares` — the key instruction:**
 ```rust
@@ -118,6 +219,8 @@ Factory pattern custody vault. One program, unlimited asset vaults. GOLD and SIL
 // Only then does token::transfer execute
 // Underlying asset never moves — vault PDA holds it throughout
 ```
+
+**Credential reads** — the multi-asset-vault reads credentials issued by `oragami-vault` (`ihUcHpWk...`). One onboarding flow, one credential, both products. The backend derives credential PDAs using the oragami-vault program ID.
 
 ---
 
@@ -187,7 +290,7 @@ Base URL: `http://localhost:3210`
 | `GET` | `/api/multi-vault/vaults` | All registered asset vaults |
 | `GET` | `/api/multi-vault/vaults/:assetMint` | Single vault state |
 | `POST` | `/api/multi-vault/vaults/:assetMint/preflight` | Credential check + share estimate |
-| `GET` | `/api/multi-vault/credentials/:wallet` | Verify multi-vault credential |
+| `GET` | `/api/multi-vault/credentials/:wallet` | Verify credential (reads from oragami-vault program) |
 | `POST` | `/api/multi-vault/credentials` | Issue multi-vault credential (admin key required) |
 
 ### Health
@@ -233,6 +336,7 @@ The NAV crank starts automatically and runs every 2 minutes.
 ```env
 SOLANA_RPC_URL=https://api.devnet.solana.com
 VAULT_PROGRAM_ID=ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP
+MULTI_VAULT_PROGRAM_ID=6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D
 VAULT_AUTHORITY_KEYPAIR=[...your keypair array...]
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/oragami_vault
 ADMIN_API_KEY=your-secret-key
@@ -266,39 +370,73 @@ curl http://localhost:3210/api/vault/nav/current
 
 ---
 
+## User Flow
+
+```
+1. Visit /onboard/connect → connect Phantom wallet
+2. Visit /onboard/register → submit institution details
+3. Backend calls issue_credential on oragami-vault program
+4. Credential PDA created on-chain: ["credential", wallet]
+5. /onboard/pending polls until credential is active
+6. /onboard/complete → Enter Vault
+
+Yield Vault (/app):
+  · Deposit USDC → receive cVAULT at live NAV
+  · NAV updates every 2 minutes from SIX Exchange
+  · Yield accrues daily, visible in dashboard
+
+Custody Vault (/app/vaults):
+  · Deposit GOLD-mock → receive VAULT-GOLD at NAV
+  · Transfer VAULT-GOLD to another credentialed institution
+  · Both credentials verified on-chain before transfer
+  · Redeem VAULT-GOLD → receive GOLD-mock at current NAV
+```
+
+---
+
 ## Repo Structure
 
 ```
 Oragami/
 ├── oragami-vault/
 │   └── programs/
-│       ├── oragami-vault/src/lib.rs        # Yield vault — 14 instructions
-│       └── multi-asset-vault/src/          # Custody vault — factory pattern
-│           └── instructions/
-│               └── transfer_shares.rs      # Dual credential check
+│       ├── oragami-vault/src/lib.rs          # Yield vault — 14 instructions
+│       └── multi-asset-vault/src/            # Custody vault — factory pattern
+│           ├── instructions/
+│           │   ├── deposit.rs                # Credential gate + share mint
+│           │   ├── transfer_shares.rs        # Dual credential check
+│           │   ├── redeem.rs                 # Burn shares, release asset
+│           │   ├── credential.rs             # Issue / revoke
+│           │   ├── register_asset.rs         # Factory: new asset vault
+│           │   ├── set_nav.rs                # NAV update, authority-only
+│           │   └── admin.rs                  # Pause vault
+│           ├── state.rs                      # Factory, AssetVault, ComplianceCredential
+│           ├── error.rs                      # VaultError codes
+│           └── constants.rs                  # Seeds, NAV denominator, thresholds
 ├── programs/
-│   └── cvault-transfer-hook/               # Token-2022 transfer hook
+│   └── cvault-transfer-hook/                 # Token-2022 transfer hook
 ├── oragami-backend/
 │   └── src/
-│       ├── crank/nav-crank.service.ts      # SIX fetch → NAV compute → set_nav CPI
-│       ├── vault/vault.service.ts          # NAV history, stats, state
-│       ├── credentials/                    # Issue / verify / revoke
-│       ├── deposits/                       # Preflight, travel rule, indexing
-│       ├── multi-asset-vault/              # Factory state, credential verify
-│       └── data/six.service.ts             # mTLS SIX API client
+│       ├── crank/nav-crank.service.ts        # SIX fetch → NAV compute → set_nav CPI
+│       ├── vault/vault.service.ts            # NAV history, stats, state
+│       ├── credentials/                      # Issue / verify / revoke
+│       ├── deposits/                         # Preflight, travel rule, indexing
+│       ├── multi-asset-vault/                # Factory state, credential verify
+│       │   └── multi-asset-vault.service.ts  # Credential PDA uses oragami-vault program ID
+│       └── data/six.service.ts               # mTLS SIX API client
 ├── oragami-frontend/
 │   ├── app/
-│   │   ├── app/page.tsx                    # Vault dashboard
-│   │   ├── app/vaults/page.tsx             # Asset custody vaults
-│   │   └── onboard/register/page.tsx       # Credential issuance
+│   │   ├── app/page.tsx                      # Yield vault dashboard
+│   │   ├── app/vaults/page.tsx               # Custody vaults
+│   │   └── onboard/                          # Credential issuance flow
 │   ├── features/vault/
-│   │   ├── useVaultState.ts                # On-chain + API state
-│   │   ├── VaultPanel.tsx                  # Deposit / redeem / convert
-│   │   └── NavSparkline.tsx                # recharts NAV history
-│   └── shared/api/index.ts                 # All typed API calls
-├── six-data-cert/                          # mTLS certificate bundle
-├── PITCH.md                                # Hackathon pitch script
-└── STRATEGY.md                             # Build strategy + issue tracker
+│   │   ├── useVaultState.ts                  # On-chain + API state
+│   │   ├── VaultPanel.tsx                    # Deposit / redeem / convert
+│   │   └── NavSparkline.tsx                  # recharts NAV history
+│   └── shared/api/index.ts                   # All typed API calls
+├── six-data-cert/                            # mTLS certificate bundle
+├── PITCH.md                                  # Hackathon pitch script
+└── STRATEGY.md                               # Build strategy + issue tracker
 ```
 
 ---

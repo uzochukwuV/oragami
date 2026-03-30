@@ -52,11 +52,24 @@ export function CtaSection() {
                   capital to work?
                 </h2>
 
-                <p className="text-xl text-muted-foreground mb-12 leading-relaxed max-w-xl">
-                  Deposit USDC into a compliant RWA vault. Earn yield on Gold and
-                  CHF-backed assets. Every operation enforced on-chain — no
-                  off-chain compliance bypass possible.
+                <p className="text-xl text-muted-foreground mb-6 leading-relaxed max-w-xl">
+                  Two products. One onboarding. Deposit USDC into the yield vault and earn Gold NAV appreciation + Solstice USX carry. Or deposit tokenized assets into the custody vault and transfer positions between credentialed institutions with zero counterparty risk.
                 </p>
+
+                <div className="space-y-2 font-mono text-sm text-muted-foreground mb-10">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    KYC · AML · Travel Rule enforced at the contract level
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    NAV priced by SIX Exchange via authenticated mTLS feed
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Vault holds custody — no counterparty risk between institutions
+                  </div>
+                </div>
 
                 <div className="flex flex-col sm:flex-row items-start gap-4">
                   <Button
@@ -64,7 +77,7 @@ export function CtaSection() {
                     className="bg-foreground hover:bg-foreground/90 text-background px-8 h-14 text-base rounded-full group"
                     asChild
                   >
-                    <a href="/app/dashboard">
+                    <a href="/app">
                       Open Vault on Devnet
                       <ArrowRight className="w-4 h-4 ml-2 transition-transform group-hover:translate-x-1" />
                     </a>
@@ -80,7 +93,7 @@ export function CtaSection() {
                 </div>
 
                 <p className="text-sm text-muted-foreground mt-8 font-mono">
-                  Running on Solana devnet · Program: ihUcHpWk...
+                  Solana devnet · oragami-vault: ihUcHpWk... · multi-asset-vault: 6Mbzwuw8...
                 </p>
               </div>
 

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { AnimatedSphere } from "./animated-sphere";
 
-const words = ["deposit", "custody", "comply", "exchange"];
+const words = ["deposit", "custody", "comply", "transfer"];
 
 export function HeroSection() {
   const [isVisible, setIsVisible] = useState(false);
@@ -56,7 +56,7 @@ export function HeroSection() {
         >
           <span className="inline-flex items-center gap-3 text-sm font-mono text-muted-foreground">
             <span className="w-8 h-px bg-foreground/30" />
-            Institutional RWA Vault · Solana Devnet
+            Institutional RWA Infrastructure · Solana · StableHacks 2026
           </span>
         </div>
 
@@ -90,18 +90,35 @@ export function HeroSection() {
 
         {/* Description + CTAs */}
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-24 items-end">
-          <p
-            className={`text-xl lg:text-2xl text-muted-foreground leading-relaxed max-w-xl transition-all duration-700 delay-200 ${
+          <div
+            className={`space-y-6 transition-all duration-700 delay-200 ${
               isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            Institutions deposit tokenized assets — Gold, Silver, T-bills —
-            directly into on-chain vaults. The vault holds custody. Institutions
-            receive share tokens priced at live NAV from SIX Exchange. Positions
-            transfer between credentialed institutions through the vault as
-            central counterparty. KYC, AML, and Travel Rule enforced at the
-            contract level on every operation.
-          </p>
+            <p className="text-xl lg:text-2xl text-muted-foreground leading-relaxed max-w-xl">
+              Two products. One compliance layer. Deployed on Solana devnet.
+            </p>
+            <div className="space-y-3 font-mono text-sm">
+              <div className="flex items-start gap-3">
+                <span className="text-foreground/40 shrink-0 mt-0.5">01</span>
+                <span className="text-muted-foreground">
+                  <span className="text-foreground font-medium">Yield Vault —</span> deposit USDC, receive cVAULT priced against a live Gold + CHF basket via SIX Exchange. 70% of deposits route to Solstice USX for carry yield. Hold gold NAV appreciation and USX yield simultaneously.
+                </span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="text-foreground/40 shrink-0 mt-0.5">02</span>
+                <span className="text-muted-foreground">
+                  <span className="text-foreground font-medium">Custody Vault —</span> deposit tokenized Gold or Silver, vault holds custody on-chain, receive VAULT-GOLD shares at live NAV. Transfer positions between institutions — both sides credential-verified before any token moves.
+                </span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="text-foreground/40 shrink-0 mt-0.5">∞</span>
+                <span className="text-muted-foreground">
+                  <span className="text-foreground font-medium">One credential —</span> soulbound KYC/AML PDA gates both products. FATF Travel Rule enforced on-chain for deposits ≥ 1,000 USDC. No off-chain bypass.
+                </span>
+              </div>
+            </div>
+          </div>
 
           <div
             className={`flex flex-col sm:flex-row items-start gap-4 transition-all duration-700 delay-300 ${
@@ -113,7 +130,7 @@ export function HeroSection() {
               className="bg-foreground hover:bg-foreground/90 text-background px-8 h-14 text-base rounded-full group"
               asChild
             >
-              <a href="/app/dashboard">
+              <a href="/app">
                 Open Vault
                 <ArrowRight className="w-4 h-4 ml-2 transition-transform group-hover:translate-x-1" />
               </a>
@@ -140,11 +157,11 @@ export function HeroSection() {
           {[...Array(2)].map((_, i) => (
             <div key={i} className="flex gap-16">
               {[
-                { value: "5.0%", label: "target APY via Solstice USX", company: "YIELD" },
-                { value: "0", label: "counterparty risk between institutions", company: "ESCROW" },
-                { value: "NAV", label: "priced by SIX Exchange live data", company: "PRICING" },
-                { value: "100%", label: "on-chain compliance enforcement", company: "COMPLIANCE" },
-                { value: "2", label: "tokenized asset vaults live on devnet", company: "GOLD · SILVER" },
+                { value: "5.0%", label: "target APY via Solstice USX carry", company: "YIELD" },
+                { value: "Gold+CHF", label: "NAV basket priced by SIX Exchange mTLS", company: "PRICING" },
+                { value: "100%", label: "on-chain KYC · AML · Travel Rule enforcement", company: "COMPLIANCE" },
+                { value: "0", label: "counterparty risk — vault holds custody throughout", company: "CUSTODY" },
+                { value: "2", label: "asset vaults live · GOLD · SILVER", company: "DEVNET" },
               ].map((stat) => (
                 <div key={`${stat.company}-${i}`} className="flex items-baseline gap-4">
                   <span className="text-4xl lg:text-5xl font-display">{stat.value}</span>

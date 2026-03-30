@@ -4,36 +4,36 @@ import { ArrowUpRight } from "lucide-react";
 import { AnimatedWave } from "./animated-wave";
 
 const footerLinks = {
-  Vault: [
+  Products: [
+    { name: "Yield Vault", href: "/app" },
+    { name: "Custody Vaults", href: "/app/vaults" },
+    { name: "Get Credentialed", href: "/onboard/connect" },
     { name: "How it works", href: "#how-it-works" },
-    { name: "Features", href: "#features" },
-    { name: "Metrics", href: "#studio" },
-    { name: "Launch App", href: "/app" },
   ],
   Compliance: [
-    { name: "KYC / AML", href: "#features" },
-    { name: "Travel Rule", href: "#features" },
+    { name: "KYC / AML Credential", href: "#features" },
+    { name: "Travel Rule (FATF)", href: "#features" },
     { name: "Transfer Hook", href: "#features" },
-    { name: "Credentials", href: "#how-it-works" },
+    { name: "Proof of Reserve", href: "#features" },
   ],
   Technology: [
     { name: "Solana", href: "https://solana.com" },
-    { name: "Anchor", href: "https://anchor-lang.com" },
-    { name: "SIX Exchange", href: "#features" },
-    { name: "Token-2022", href: "#features" },
+    { name: "Anchor 0.32", href: "https://anchor-lang.com" },
+    { name: "SIX Exchange API", href: "https://www.six-group.com" },
+    { name: "Solstice USX", href: "#features" },
   ],
   Hackathon: [
     { name: "StableHacks 2026", href: "#" },
     { name: "Track 4 — RWA Vaults", href: "#" },
-    { name: "GitHub", href: "#" },
-    { name: "Demo Guide", href: "#" },
+    { name: "oragami-vault on Solscan", href: "https://explorer.solana.com/address/ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP?cluster=devnet" },
+    { name: "multi-asset-vault on Solscan", href: "https://explorer.solana.com/address/6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D?cluster=devnet" },
   ],
 };
 
 const socialLinks = [
-  { name: "GitHub", href: "#" },
-  { name: "Twitter", href: "#" },
-  { name: "Solscan", href: `https://explorer.solana.com/address/ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP?cluster=devnet` },
+  { name: "oragami-vault", href: "https://explorer.solana.com/address/ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP?cluster=devnet" },
+  { name: "multi-asset-vault", href: "https://explorer.solana.com/address/6Mbzwuw8JdmmQ3uZGw2CepiRLRWo2DgCga5LUhmsha7D?cluster=devnet" },
+  { name: "transfer-hook", href: "https://explorer.solana.com/address/965gkqvNvYbUsSdqz4AB3YvBw9hqQuNeKMYzHxQBsP1N?cluster=devnet" },
 ];
 
 export function FooterSection() {
@@ -53,20 +53,21 @@ export function FooterSection() {
                 <span className="text-xs text-muted-foreground font-mono">RWA</span>
               </a>
 
-              <p className="text-muted-foreground leading-relaxed mb-8 max-w-xs">
-                Institutional RWA vault on Solana. Deposit USDC, mint cVAULT backed
-                by Gold + CHF via SIX Exchange. On-chain KYC/AML enforcement.
-                Built for StableHacks 2026.
+              <p className="text-muted-foreground leading-relaxed mb-4 max-w-xs">
+                Institutional RWA infrastructure on Solana. Two products, one compliance layer.
+              </p>
+              <p className="text-muted-foreground leading-relaxed mb-8 max-w-xs text-sm">
+                Yield Vault: deposit USDC, earn Gold NAV + USX carry. Custody Vault: deposit tokenized assets, transfer positions between credentialed institutions with zero counterparty risk.
               </p>
 
-              <div className="flex gap-6">
+              <div className="flex flex-col gap-3">
                 {socialLinks.map((link) => (
                   <a
                     key={link.name}
                     href={link.href}
-                    target={link.href.startsWith("http") ? "_blank" : undefined}
+                    target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 group"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 group font-mono"
                   >
                     {link.name}
                     <ArrowUpRight className="w-3 h-3 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
@@ -84,6 +85,8 @@ export function FooterSection() {
                     <li key={link.name}>
                       <a
                         href={link.href}
+                        target={link.href.startsWith("http") ? "_blank" : undefined}
+                        rel="noopener noreferrer"
                         className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                       >
                         {link.name}
@@ -107,7 +110,7 @@ export function FooterSection() {
               Devnet operational
             </span>
             <span className="font-mono text-xs text-foreground/30">
-              ihUcHpWk...
+              3 programs deployed
             </span>
           </div>
         </div>

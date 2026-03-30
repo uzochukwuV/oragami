@@ -20,8 +20,9 @@ const ASSET_VAULT_SEED = Buffer.from('vault');
 const SHARE_MINT_SEED = Buffer.from('share_mint');
 const VAULT_TOKEN_SEED = Buffer.from('vault_token');
 const CREDENTIAL_SEED = Buffer.from('credential');
-// Credentials are issued BY the multi-asset vault program (6Mbzwuw8...)
-// PDA seeds = ["credential", wallet] under MULTI_VAULT_PROGRAM_ID
+const TRAVEL_RULE_SEED = Buffer.from('travel_rule');
+// Credentials are issued by oragami-vault (ihUcHpWk...) — one onboarding flow gates both products
+const ORAGAMI_VAULT_PROGRAM_ID = new PublicKey('ihUcHpWkfpeE6cH8ycusgyaqNMGGJj8krEyWox1m6aP');
 
 export interface AssetVaultInfo {
   assetMint: string;
@@ -34,6 +35,7 @@ export interface AssetVaultInfo {
   totalSupply: string;
   minDeposit: string;
   maxDeposit: string;
+  travelRuleRequired: boolean;
   paused: boolean;
 }
 
@@ -97,10 +99,17 @@ export class MultiAssetVaultService implements OnModuleInit {
     )[0];
   }
 
-  // Credential PDA uses the SAME program as the vault (multi-asset vault program)
+  // Credential PDA is derived against oragami-vault program — one credential gates both products
   deriveCredentialPda(wallet: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [CREDENTIAL_SEED, wallet.toBuffer()],
+      ORAGAMI_VAULT_PROGRAM_ID,
+    )[0];
+  }
+
+  deriveTravelRulePda(payer: PublicKey, nonceHash: Buffer): PublicKey {
+    return PublicKey.findProgramAddressSync(
+      [TRAVEL_RULE_SEED, payer.toBuffer(), nonceHash],
       this.program.programId,
     )[0];
   }
@@ -128,6 +137,7 @@ export class MultiAssetVaultService implements OnModuleInit {
       totalSupply: raw.totalSupply?.toString() ?? '0',
       minDeposit: raw.minDeposit?.toString() ?? '0',
       maxDeposit: raw.maxDeposit?.toString() ?? '0',
+      travelRuleRequired: !!raw.travelRuleRequired,
       paused: !!raw.paused,
     };
   }
@@ -341,6 +351,10 @@ export class MultiAssetVaultService implements OnModuleInit {
       amountBn >= BigInt(vault.minDeposit) &&
       amountBn <= BigInt(vault.maxDeposit);
 
+    const TRAVEL_RULE_THRESHOLD = 1_000_000_000n;
+    const requiresTravelRule =
+      vault.travelRuleRequired && amountBn >= TRAVEL_RULE_THRESHOLD;
+
     let reason: string | undefined;
     if (!cred.canDeposit) reason = `Credential ${cred.status}`;
     else if (vault.paused) reason = 'Vault is paused';
@@ -350,12 +364,14 @@ export class MultiAssetVaultService implements OnModuleInit {
     return {
       canDeposit,
       reason,
+      requiresTravelRule,
       credentialStatus: cred.status,
       vault: {
         ticker: vault.ticker,
         navPriceBps: vault.navPriceBps,
         navDisplay: vault.navDisplay,
         paused: vault.paused,
+        travelRuleRequired: vault.travelRuleRequired,
       },
       estimatedShares: estimatedShares.toString(),
     };

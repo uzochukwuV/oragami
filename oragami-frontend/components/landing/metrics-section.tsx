@@ -39,10 +39,34 @@ function AnimatedCounter({ end, suffix = "", prefix = "" }: { end: number; suffi
 }
 
 const metrics = [
-  { value: 5, suffix: "%", prefix: "", label: "Target APY via yield strategy" },
-  { value: 70, suffix: "%", prefix: "", label: "USDC allocated to yield" },
-  { value: 100, suffix: "%", prefix: "", label: "On-chain compliance enforcement" },
-  { value: 3, suffix: "", prefix: "", label: "Programs deployed on Solana devnet" },
+  {
+    value: 5,
+    suffix: "%",
+    prefix: "",
+    label: "Target APY via Solstice USX carry yield",
+    sub: "70% of deposits allocated to yield strategy",
+  },
+  {
+    value: 50,
+    suffix: "%",
+    prefix: "",
+    label: "Gold weight in cVAULT NAV basket",
+    sub: "30% CHF/USD · 20% eUSX · priced by SIX Exchange",
+  },
+  {
+    value: 100,
+    suffix: "%",
+    prefix: "",
+    label: "On-chain compliance enforcement",
+    sub: "KYC · AML · Travel Rule · Transfer Hook — no off-chain bypass",
+  },
+  {
+    value: 3,
+    suffix: "",
+    prefix: "",
+    label: "Anchor programs deployed on Solana devnet",
+    sub: "oragami-vault · multi-asset-vault · cvault-transfer-hook",
+  },
 ];
 
 export function MetricsSection() {
@@ -104,6 +128,7 @@ export function MetricsSection() {
             >
               <AnimatedCounter end={metric.value} suffix={metric.suffix} prefix={metric.prefix} />
               <div className="mt-4 text-lg text-muted-foreground">{metric.label}</div>
+              <div className="mt-1 text-sm font-mono text-muted-foreground/60">{metric.sub}</div>
             </div>
           ))}
         </div>

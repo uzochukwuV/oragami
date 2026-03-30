@@ -412,6 +412,7 @@ export interface AssetVaultInfo {
   totalSupply: string;
   minDeposit: string;
   maxDeposit: string;
+  travelRuleRequired: boolean;
   paused: boolean;
 }
 
@@ -430,8 +431,9 @@ export interface MultiVaultCredential {
 export interface MultiVaultPreflight {
   canDeposit: boolean;
   reason?: string;
+  requiresTravelRule: boolean;
   credentialStatus: string;
-  vault: { ticker: string; navPriceBps: string; navDisplay: string; paused: boolean };
+  vault: { ticker: string; navPriceBps: string; navDisplay: string; paused: boolean; travelRuleRequired: boolean };
   estimatedShares: string;
 }
 

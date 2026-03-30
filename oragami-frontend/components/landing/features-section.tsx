@@ -5,197 +5,189 @@ import { useEffect, useRef, useState } from "react";
 const features = [
   {
     number: "01",
-    title: "RWA-Backed NAV Pricing",
+    title: "Gold + CHF NAV Yield Vault",
     description:
-      "cVAULT is priced against a real basket: 50% Gold (XAU/USD) + 30% CHF/USD from SIX Exchange. NAV updates on-chain after every price feed. Deposit 100 USDC at NAV $1.043 and receive 95.78 cVAULT — not a stablecoin, a real asset-backed instrument.",
-    visual: "deploy",
+      "Institutions deposit USDC and receive cVAULT — a NAV-priced token backed by a live basket: 50% Gold (XAU/USD) + 30% CHF/USD from SIX Exchange via authenticated mTLS feed, + 20% Solstice eUSX. 70% of deposited USDC is allocated to Solstice USX to earn carry yield. The result: cVAULT holders capture gold price appreciation and USX yield simultaneously. NAV updates on-chain every 2 minutes. Hard guard: max ±10% change per crank run.",
+    visual: "nav",
     badge: null,
   },
   {
     number: "02",
-    title: "On-Chain Compliance Enforcement",
+    title: "Soulbound Compliance Credential",
     description:
-      "Every wallet must hold a soulbound ComplianceCredential PDA before depositing. KYC level, AML coverage score, jurisdiction, and expiry are stored on-chain. Deposits above 1000 USDC require Travel Rule data. The transfer hook blocks non-whitelisted wallets at the token level — no off-chain bypass possible.",
-    visual: "security",
+      "Every institution wallet must hold a ComplianceCredential PDA before touching either product. Seeds: [\"credential\", wallet] — one per institution, non-transferable. Stores KYC level (1–3), AML coverage score (0–100), jurisdiction (ISO 3166), tier, and expiry on-chain. The deposit instruction derives the credential from the payer's key — you cannot pass a fake. One onboarding flow gates both the yield vault and the custody vault.",
+    visual: "credential",
     badge: null,
   },
   {
     number: "03",
-    title: "Programmable Yield Engine",
+    title: "FATF Travel Rule Enforcement",
     description:
-      "70% of deposits are allocated to the yield strategy. A backend crank calls process_yield daily, accruing yield on-chain into pending_yield. distribute_yield mints mock USX tokens to the vault — a transparent, auditable yield trail. In production: Solstice USX CPI replaces the mock.",
-    visual: "ai",
+      "Deposits ≥ 1,000 USDC require a TravelRuleData PDA to be initialised before the deposit call. The PDA stores originator name, originator account, beneficiary name, compliance hash, and amount. The deposit instruction verifies payer match, amount match, and a consumed flag — preventing replay of the same record across multiple deposits. This is FATF Travel Rule compliance enforced at the contract level, not off-chain.",
+    visual: "travel",
     badge: null,
   },
   {
     number: "04",
-    title: "Permissioned Secondary Market",
+    title: "Tokenized Asset Custody Vault",
     description:
-      "Convert cVAULT to cVAULT-TRADE for secondary market trading. Every transfer triggers the compliance hook — KYC expiry, AML status, and Travel Rule are validated on-chain automatically. Only whitelisted institutions can trade. Redeem cVAULT-TRADE back to USDC at current NAV at any time.",
-    visual: "collab",
-    badge: null,
+      "The multi-asset vault factory accepts real tokenized assets — Gold, Silver, T-bills — directly. Each asset gets its own vault PDA and share token (VAULT-GOLD, VAULT-SILVER) priced at live NAV from SIX Exchange. The vault PDA holds custody of the underlying asset throughout the position lifecycle. Institutions receive share tokens at deposit NAV and redeem at current NAV — capturing asset appreciation on-chain.",
+    visual: "custody",
+    badge: "Live on Devnet",
   },
   {
     number: "05",
-    title: "Multi-Asset Vault Factory",
+    title: "Dual-Credential Position Transfers",
     description:
-      "The next evolution: institutions deposit actual tokenized assets — Gold, Silver, T-bills — directly into per-asset vaults. Each asset gets its own share token (VAULT-GOLD, VAULT-SILVER) priced at live NAV. One factory program, unlimited asset classes. The same compliance credential gates every vault. Built and deployed on devnet.",
-    visual: "factory",
-    badge: "Live on Devnet",
+      "Institutions transfer VAULT-GOLD positions to each other through the vault as central counterparty. The transfer_shares instruction verifies both sender and receiver credentials on-chain before any token moves — status active, not expired, wallet binding confirmed. The underlying asset never leaves vault custody. This is the on-chain equivalent of a CCP-settled institutional trade: zero counterparty risk, full audit trail via TransferMade event.",
+    visual: "transfer",
+    badge: null,
   },
 ];
 
-function DeployVisual() {
+function NavVisual() {
   return (
     <svg viewBox="0 0 200 160" className="w-full h-full">
-      <defs>
-        <clipPath id="deployClip">
-          <rect x="30" y="20" width="140" height="120" rx="4" />
-        </clipPath>
-      </defs>
-      <rect x="30" y="20" width="140" height="120" rx="4" fill="none" stroke="currentColor" strokeWidth="2" />
-      <g clipPath="url(#deployClip)">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <rect key={i} x="40" y={35 + i * 16} width="120" height="10" rx="2" fill="currentColor" opacity="0.15">
-            <animate attributeName="opacity" values="0.15;0.8;0.15" dur="2s" begin={`${i * 0.15}s`} repeatCount="indefinite" />
-            <animate attributeName="width" values="20;120;20" dur="2s" begin={`${i * 0.15}s`} repeatCount="indefinite" />
-          </rect>
-        ))}
-      </g>
-      <circle cx="100" cy="155" r="3" fill="currentColor" opacity="0.3">
-        <animate attributeName="opacity" values="0.3;1;0.3" dur="1s" repeatCount="indefinite" />
-      </circle>
-    </svg>
-  );
-}
-
-function AIVisual() {
-  return (
-    <svg viewBox="0 0 200 160" className="w-full h-full">
-      <circle cx="100" cy="80" r="12" fill="currentColor">
-        <animate attributeName="r" values="12;14;12" dur="2s" repeatCount="indefinite" />
-      </circle>
-      {[0, 1, 2, 3, 4, 5].map((i) => {
-        const angle = (i * 60) * (Math.PI / 180);
-        const radius = 50;
-        return (
-          <g key={i}>
-            <line x1="100" y1="80" x2={100 + Math.cos(angle) * radius} y2={80 + Math.sin(angle) * radius} stroke="currentColor" strokeWidth="1" opacity="0.3">
-              <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" begin={`${i * 0.3}s`} repeatCount="indefinite" />
-            </line>
-            <circle cx={100 + Math.cos(angle) * radius} cy={80 + Math.sin(angle) * radius} r="6" fill="none" stroke="currentColor" strokeWidth="2">
-              <animate attributeName="r" values="6;8;6" dur="2s" begin={`${i * 0.3}s`} repeatCount="indefinite" />
-            </circle>
-          </g>
-        );
-      })}
-      <circle cx="100" cy="80" r="30" fill="none" stroke="currentColor" strokeWidth="1" opacity="0">
-        <animate attributeName="r" values="20;60" dur="2s" repeatCount="indefinite" />
-        <animate attributeName="opacity" values="0.5;0" dur="2s" repeatCount="indefinite" />
-      </circle>
-    </svg>
-  );
-}
-
-function CollabVisual() {
-  return (
-    <svg viewBox="0 0 200 160" className="w-full h-full">
-      <g>
-        <rect x="30" y="50" width="50" height="60" rx="4" fill="none" stroke="currentColor" strokeWidth="2" />
-        <text x="55" y="85" textAnchor="middle" fontSize="14" fontFamily="monospace" fill="currentColor">KYC</text>
-        <circle cx="55" cy="35" r="12" fill="none" stroke="currentColor" strokeWidth="2" />
-      </g>
-      <g>
-        <rect x="120" y="50" width="50" height="60" rx="4" fill="none" stroke="currentColor" strokeWidth="2" />
-        <text x="145" y="85" textAnchor="middle" fontSize="14" fontFamily="monospace" fill="currentColor">KYC</text>
-        <circle cx="145" cy="35" r="12" fill="none" stroke="currentColor" strokeWidth="2" />
-      </g>
-      <line x1="80" y1="80" x2="120" y2="80" stroke="currentColor" strokeWidth="2" strokeDasharray="4 4">
-        <animate attributeName="stroke-dashoffset" values="0;-8" dur="0.5s" repeatCount="indefinite" />
-      </line>
-      <circle r="4" fill="currentColor">
-        <animateMotion dur="1.5s" repeatCount="indefinite">
-          <mpath href="#dataPath2" />
-        </animateMotion>
-      </circle>
-      <path id="dataPath2" d="M 80 80 L 120 80" fill="none" />
-      <g transform="translate(100, 130)">
-        <circle r="6" fill="none" stroke="currentColor" strokeWidth="2">
-          <animate attributeName="r" values="6;10;6" dur="1s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="1;0.3;1" dur="1s" repeatCount="indefinite" />
+      <line x1="20" y1="130" x2="180" y2="130" stroke="currentColor" strokeWidth="1" opacity="0.2" />
+      {[0,1,2,3,4,5,6,7].map((i) => (
+        <line key={i} x1={20 + i*23} y1="130" x2={20 + i*23} y2="125" stroke="currentColor" strokeWidth="1" opacity="0.2" />
+      ))}
+      <polyline
+        points="20,110 43,105 66,95 89,88 112,75 135,70 158,60 180,52"
+        fill="none" stroke="currentColor" strokeWidth="2" opacity="0.8"
+      />
+      <polyline
+        points="20,110 43,105 66,95 89,88 112,75 135,70 158,60 180,52"
+        fill="none" stroke="currentColor" strokeWidth="8" opacity="0.05"
+      />
+      {[
+        [20,110],[66,95],[112,75],[158,60],[180,52]
+      ].map(([x,y], i) => (
+        <circle key={i} cx={x} cy={y} r="3" fill="currentColor" opacity="0.6">
+          <animate attributeName="r" values="3;5;3" dur="2s" begin={`${i*0.4}s`} repeatCount="indefinite" />
         </circle>
-      </g>
+      ))}
+      <text x="22" y="48" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.5">NAV</text>
+      <text x="22" y="58" fontSize="9" fontFamily="monospace" fill="currentColor" opacity="0.8">$1.043</text>
+      <text x="140" y="20" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.4">SIX Exchange</text>
+      <text x="140" y="30" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.4">mTLS feed</text>
     </svg>
   );
 }
 
-function SecurityVisual() {
+function CredentialVisual() {
   return (
     <svg viewBox="0 0 200 160" className="w-full h-full">
-      <path d="M 100 20 L 150 40 L 150 90 Q 150 130 100 145 Q 50 130 50 90 L 50 40 Z" fill="none" stroke="currentColor" strokeWidth="2" />
-      <path d="M 100 35 L 135 50 L 135 85 Q 135 115 100 128 Q 65 115 65 85 L 65 50 Z" fill="currentColor" opacity="0.1">
-        <animate attributeName="opacity" values="0.1;0.2;0.1" dur="2s" repeatCount="indefinite" />
-      </path>
-      <rect x="85" y="70" width="30" height="25" rx="3" fill="currentColor" />
-      <path d="M 90 70 L 90 60 Q 90 50 100 50 Q 110 50 110 60 L 110 70" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-      <circle cx="100" cy="80" r="4" fill="white" />
-      <rect x="98" y="82" width="4" height="8" fill="white" />
-      <line x1="60" y1="60" x2="140" y2="60" stroke="currentColor" strokeWidth="1" opacity="0">
-        <animate attributeName="y1" values="40;120;40" dur="3s" repeatCount="indefinite" />
-        <animate attributeName="y2" values="40;120;40" dur="3s" repeatCount="indefinite" />
-        <animate attributeName="opacity" values="0;0.5;0" dur="3s" repeatCount="indefinite" />
+      <rect x="50" y="30" width="100" height="100" rx="6" fill="none" stroke="currentColor" strokeWidth="2" />
+      <rect x="50" y="30" width="100" height="28" rx="6" fill="currentColor" opacity="0.08" />
+      <text x="100" y="49" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.6">CREDENTIAL PDA</text>
+      {[
+        ["wallet", "HHDs...Wg1"],
+        ["kyc_level", "3 · full"],
+        ["aml_score", "95 / 100"],
+        ["jurisdiction", "CH"],
+        ["expires_at", "2027-03-29"],
+        ["status", "ACTIVE"],
+      ].map(([k, v], i) => (
+        <g key={k}>
+          <text x="62" y={76 + i * 13} fontSize="6.5" fontFamily="monospace" fill="currentColor" opacity="0.4">{k}</text>
+          <text x="138" y={76 + i * 13} textAnchor="end" fontSize="6.5" fontFamily="monospace" fill="currentColor" opacity="0.8">{v}</text>
+        </g>
+      ))}
+      <circle cx="100" cy="155" r="4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.4">
+        <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite" />
+      </circle>
+    </svg>
+  );
+}
+
+function TravelVisual() {
+  return (
+    <svg viewBox="0 0 200 160" className="w-full h-full">
+      <rect x="20" y="20" width="75" height="55" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="57" y="38" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">TRAVEL RULE</text>
+      <text x="57" y="50" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">PDA</text>
+      <text x="57" y="64" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.8">≥ 1,000 USDC</text>
+      <rect x="105" y="20" width="75" height="55" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="142" y="38" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">DEPOSIT</text>
+      <text x="142" y="50" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">INSTRUCTION</text>
+      <text x="142" y="64" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.8">verifies PDA</text>
+      <line x1="95" y1="47" x2="105" y2="47" stroke="currentColor" strokeWidth="1.5" opacity="0.4" />
+      <polygon points="103,44 107,47 103,50" fill="currentColor" opacity="0.4" />
+      <rect x="60" y="100" width="80" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="100" y="116" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">consumed: true</text>
+      <text x="100" y="130" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.7">replay blocked</text>
+      <line x1="57" y1="75" x2="80" y2="100" stroke="currentColor" strokeWidth="1" opacity="0.3" strokeDasharray="3 2" />
+      <line x1="142" y1="75" x2="120" y2="100" stroke="currentColor" strokeWidth="1" opacity="0.3" strokeDasharray="3 2" />
+    </svg>
+  );
+}
+
+function CustodyVisual() {
+  return (
+    <svg viewBox="0 0 200 160" className="w-full h-full">
+      <rect x="70" y="55" width="60" height="60" rx="4" fill="none" stroke="currentColor" strokeWidth="2" />
+      <text x="100" y="80" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">VAULT PDA</text>
+      <text x="100" y="92" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.8">GOLD-mock</text>
+      <text x="100" y="104" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">in custody</text>
+      <rect x="10" y="20" width="50" height="30" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="35" y="39" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.7">Institution A</text>
+      <rect x="140" y="20" width="50" height="30" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="165" y="39" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.7">Institution B</text>
+      <line x1="60" y1="35" x2="70" y2="70" stroke="currentColor" strokeWidth="1.5" opacity="0.4" />
+      <polygon points="68,67 72,72 76,67" fill="currentColor" opacity="0.4" />
+      <line x1="130" y1="70" x2="140" y2="35" stroke="currentColor" strokeWidth="1.5" opacity="0.4" />
+      <polygon points="128,67 132,72 136,67" fill="currentColor" opacity="0.4" />
+      <text x="35" y="58" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">VAULT-GOLD</text>
+      <text x="165" y="58" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">VAULT-GOLD</text>
+      <circle r="3" fill="currentColor" opacity="0.7">
+        <animateMotion dur="2s" repeatCount="indefinite">
+          <mpath href="#custodyPath" />
+        </animateMotion>
+      </circle>
+      <path id="custodyPath" d="M 60 35 L 70 70 L 130 70 L 140 35" fill="none" />
+    </svg>
+  );
+}
+
+function TransferVisual() {
+  return (
+    <svg viewBox="0 0 200 160" className="w-full h-full">
+      <rect x="10" y="55" width="55" height="50" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="37" y="75" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">SENDER</text>
+      <text x="37" y="87" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.7">KYC ✓</text>
+      <text x="37" y="99" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.7">AML ✓</text>
+      <rect x="135" y="55" width="55" height="50" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <text x="162" y="75" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.5">RECEIVER</text>
+      <text x="162" y="87" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.7">KYC ✓</text>
+      <text x="162" y="99" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.7">AML ✓</text>
+      <rect x="75" y="65" width="50" height="30" rx="3" fill="currentColor" opacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+      <text x="100" y="83" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.7">VAULT</text>
+      <line x1="65" y1="80" x2="75" y2="80" stroke="currentColor" strokeWidth="1.5" opacity="0.5" strokeDasharray="3 2">
+        <animate attributeName="stroke-dashoffset" values="0;-6" dur="0.4s" repeatCount="indefinite" />
       </line>
-    </svg>
-  );
-}
-
-function FactoryVisual() {
-  return (
-    <svg viewBox="0 0 200 160" className="w-full h-full">
-      {/* Central factory node */}
-      <rect x="75" y="60" width="50" height="40" rx="4" fill="none" stroke="currentColor" strokeWidth="2" />
-      <text x="100" y="85" textAnchor="middle" fontSize="9" fontFamily="monospace" fill="currentColor" opacity="0.8">FACTORY</text>
-      {/* GOLD vault */}
-      <rect x="10" y="20" width="44" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <text x="32" y="32" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor">VAULT</text>
-      <text x="32" y="42" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.7">GOLD</text>
-      {/* SILVER vault */}
-      <rect x="146" y="20" width="44" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <text x="168" y="32" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor">VAULT</text>
-      <text x="168" y="42" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.7">SILVER</text>
-      {/* Future vault */}
-      <rect x="78" y="118" width="44" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 2" opacity="0.4" />
-      <text x="100" y="130" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.4">VAULT</text>
-      <text x="100" y="140" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="currentColor" opacity="0.4">T-BILL</text>
-      {/* Connecting lines */}
-      <line x1="54" y1="34" x2="75" y2="70" stroke="currentColor" strokeWidth="1" opacity="0.3" />
-      <line x1="146" y1="34" x2="125" y2="70" stroke="currentColor" strokeWidth="1" opacity="0.3" />
-      <line x1="100" y1="100" x2="100" y2="118" stroke="currentColor" strokeWidth="1" opacity="0.2" strokeDasharray="3 2" />
-      {/* Animated share tokens flowing out */}
-      <circle r="3" fill="currentColor" opacity="0.8">
-        <animateMotion dur="2s" repeatCount="indefinite" begin="0s">
-          <mpath href="#goldPath" />
+      <line x1="125" y1="80" x2="135" y2="80" stroke="currentColor" strokeWidth="1.5" opacity="0.5" strokeDasharray="3 2">
+        <animate attributeName="stroke-dashoffset" values="0;-6" dur="0.4s" repeatCount="indefinite" />
+      </line>
+      <circle r="3" fill="currentColor">
+        <animateMotion dur="1.5s" repeatCount="indefinite">
+          <mpath href="#transferPath" />
         </animateMotion>
       </circle>
-      <circle r="3" fill="currentColor" opacity="0.8">
-        <animateMotion dur="2s" repeatCount="indefinite" begin="1s">
-          <mpath href="#silverPath" />
-        </animateMotion>
-      </circle>
-      <path id="goldPath" d="M 75 70 L 54 34" fill="none" />
-      <path id="silverPath" d="M 125 70 L 146 34" fill="none" />
+      <path id="transferPath" d="M 65 80 L 135 80" fill="none" />
+      <text x="100" y="140" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="currentColor" opacity="0.4">both verified on-chain</text>
     </svg>
   );
 }
 
 function AnimatedVisual({ type }: { type: string }) {
   switch (type) {
-    case "deploy": return <DeployVisual />;
-    case "ai": return <AIVisual />;
-    case "collab": return <CollabVisual />;
-    case "security": return <SecurityVisual />;
-    case "factory": return <FactoryVisual />;
-    default: return <DeployVisual />;
+    case "nav": return <NavVisual />;
+    case "credential": return <CredentialVisual />;
+    case "travel": return <TravelVisual />;
+    case "custody": return <CustodyVisual />;
+    case "transfer": return <TransferVisual />;
+    default: return <NavVisual />;
   }
 }
 
@@ -212,8 +204,6 @@ function FeatureCard({ feature, index }: { feature: typeof features[0]; index: n
     return () => observer.disconnect();
   }, []);
 
-  const isUpcoming = feature.badge !== null;
-
   return (
     <div
       ref={cardRef}
@@ -223,10 +213,9 @@ function FeatureCard({ feature, index }: { feature: typeof features[0]; index: n
       style={{ transitionDelay: `${index * 100}ms` }}
     >
       <div className={`flex flex-col lg:flex-row gap-8 lg:gap-16 py-12 lg:py-20 border-b border-foreground/10 ${
-        isUpcoming ? "relative" : ""
+        feature.badge ? "relative" : ""
       }`}>
-        {/* Subtle highlight for the new feature */}
-        {isUpcoming && (
+        {feature.badge && (
           <div className="absolute inset-0 -mx-6 lg:-mx-12 bg-foreground/[0.02] border-l-2 border-foreground/20 pointer-events-none" />
         )}
         <div className="shrink-0 flex flex-col gap-2">
@@ -284,9 +273,9 @@ export function FeaturesSection() {
               isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            Institutional-grade vault.
+            Two products.
             <br />
-            <span className="text-muted-foreground">Built on Solana.</span>
+            <span className="text-muted-foreground">One compliance layer.</span>
           </h2>
         </div>
         <div>
