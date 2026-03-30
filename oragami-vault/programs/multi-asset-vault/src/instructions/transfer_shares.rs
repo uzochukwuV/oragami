@@ -1,6 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
-use crate::constants::{ASSET_VAULT_SEED, CREDENTIAL_ACTIVE, CREDENTIAL_SEED};
+use crate::constants::{
+    ASSET_VAULT_SEED, CREDENTIAL_ACTIVE, CREDENTIAL_SEED, ORAGAMI_VAULT_PROGRAM_ID,
+};
 use crate::error::VaultError;
 use crate::state::{AssetVault, ComplianceCredential};
 
@@ -25,7 +27,22 @@ pub fn handler(ctx: Context<TransferShares>, amount: u64) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
 
     // ── Sender credential check ───────────────────────────────────────────────
-    let sender_cred = &ctx.accounts.sender_credential;
+    let expected_sender_credential_pda = Pubkey::find_program_address(
+        &[CREDENTIAL_SEED, ctx.accounts.sender.key().as_ref()],
+        &ORAGAMI_VAULT_PROGRAM_ID,
+    )
+    .0;
+    require!(
+        ctx.accounts.sender_credential.key() == expected_sender_credential_pda,
+        VaultError::InvalidCredentialPda
+    );
+    require!(
+        *ctx.accounts.sender_credential.owner == ORAGAMI_VAULT_PROGRAM_ID,
+        VaultError::WrongCredentialProgram
+    );
+    let sender_cred_data_ref = ctx.accounts.sender_credential.try_borrow_data()?;
+    let mut sender_cred_data: &[u8] = &sender_cred_data_ref;
+    let sender_cred = ComplianceCredential::try_deserialize(&mut sender_cred_data)?;
     require!(
         sender_cred.status == CREDENTIAL_ACTIVE,
         VaultError::CredentialNotActive
@@ -37,7 +54,23 @@ pub fn handler(ctx: Context<TransferShares>, amount: u64) -> Result<()> {
     );
 
     // ── Receiver credential check ─────────────────────────────────────────────
-    let receiver_cred = &ctx.accounts.receiver_credential;
+    let receiver_wallet = ctx.accounts.receiver_share_account.owner;
+    let expected_receiver_credential_pda = Pubkey::find_program_address(
+        &[CREDENTIAL_SEED, receiver_wallet.as_ref()],
+        &ORAGAMI_VAULT_PROGRAM_ID,
+    )
+    .0;
+    require!(
+        ctx.accounts.receiver_credential.key() == expected_receiver_credential_pda,
+        VaultError::InvalidCredentialPda
+    );
+    require!(
+        *ctx.accounts.receiver_credential.owner == ORAGAMI_VAULT_PROGRAM_ID,
+        VaultError::WrongCredentialProgram
+    );
+    let receiver_cred_data_ref = ctx.accounts.receiver_credential.try_borrow_data()?;
+    let mut receiver_cred_data: &[u8] = &receiver_cred_data_ref;
+    let receiver_cred = ComplianceCredential::try_deserialize(&mut receiver_cred_data)?;
     require!(
         receiver_cred.status == CREDENTIAL_ACTIVE,
         VaultError::ReceiverCredentialNotActive
@@ -107,19 +140,23 @@ pub struct TransferShares<'info> {
     pub receiver_share_account: Account<'info, TokenAccount>,
 
     /// Sender's compliance credential
+    /// CHECK: validated against oragami-vault credential PDA + owner in handler.
     #[account(
         seeds = [CREDENTIAL_SEED, sender.key().as_ref()],
-        bump = sender_credential.bump
+        bump,
+        seeds::program = ORAGAMI_VAULT_PROGRAM_ID
     )]
-    pub sender_credential: Account<'info, ComplianceCredential>,
+    pub sender_credential: UncheckedAccount<'info>,
 
     /// Receiver's compliance credential
     /// seeds = [b"credential", receiver_share_account.owner]
+    /// CHECK: validated against oragami-vault credential PDA + owner in handler.
     #[account(
         seeds = [CREDENTIAL_SEED, receiver_share_account.owner.as_ref()],
-        bump = receiver_credential.bump
+        bump,
+        seeds::program = ORAGAMI_VAULT_PROGRAM_ID
     )]
-    pub receiver_credential: Account<'info, ComplianceCredential>,
+    pub receiver_credential: UncheckedAccount<'info>,
 
     #[account(mut)]
     pub sender: Signer<'info>,

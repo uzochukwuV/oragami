@@ -51,6 +51,8 @@ pub struct AssetVault {
     pub max_deposit: u64,
     /// Human-readable ticker, e.g. b"GOLD\0\0\0\0"
     pub ticker: [u8; 8],
+    /// If true, deposits >= TRAVEL_RULE_THRESHOLD require TravelRuleData PDA.
+    pub travel_rule_required: bool,
     pub paused: bool,
 }
 
@@ -67,8 +69,27 @@ impl AssetVault {
         + 8  // min_deposit
         + 8  // max_deposit
         + 8  // ticker
+        + 1  // travel_rule_required
         + 1; // paused
-        // = 154 bytes
+        // = 155 bytes
+}
+
+// ─── TravelRuleData ───────────────────────────────────────────────────────────
+//
+// Per-deposit Travel Rule payload, single-use.
+// Seeds = [b"travel_rule", payer, nonce_hash]
+
+#[account]
+pub struct TravelRuleData {
+    pub bump: u8,
+    pub payer: Pubkey,
+    pub amount: u64,
+    pub submitted_at: i64,
+    pub consumed: bool,
+}
+
+impl TravelRuleData {
+    pub const SIZE: usize = 8 + 1 + 32 + 8 + 8 + 1;
 }
 
 // ─── ComplianceCredential ─────────────────────────────────────────────────────
@@ -93,6 +114,8 @@ pub struct ComplianceCredential {
     pub kyc_level: u8,
     /// 0–100 AML score
     pub aml_coverage: u8,
+    /// SHA-256 of off-chain KYC docs (aligned with oragami-vault credential layout)
+    pub attestation_hash: [u8; 32],
     pub issued_at: i64,
     pub expires_at: i64,
     /// 1 = active, 3 = revoked
@@ -109,8 +132,9 @@ impl ComplianceCredential {
         + 1  // tier
         + 1  // kyc_level
         + 1  // aml_coverage
+        + 32 // attestation_hash
         + 8  // issued_at
         + 8  // expires_at
         + 1; // status
-        // = 129 bytes
+        // = 161 bytes
 }

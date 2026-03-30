@@ -57,4 +57,19 @@ pub enum VaultError {
 
     #[msg("Share token mint does not match this vault")]
     WrongShareMint,
+
+    #[msg("Credential account is not owned by the oragami-vault program")]
+    WrongCredentialProgram,
+
+    #[msg("Credential PDA does not match expected derivation")]
+    InvalidCredentialPda,
+
+    #[msg("Travel Rule data required for this deposit")]
+    TravelRuleRequired,
+
+    #[msg("Travel Rule data does not match this deposit")]
+    InvalidTravelRule,
+
+    #[msg("Travel Rule data already consumed")]
+    TravelRuleAlreadyConsumed,
 }

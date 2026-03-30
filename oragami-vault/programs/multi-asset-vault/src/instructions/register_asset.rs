@@ -22,8 +22,10 @@ pub fn handler(
     nav_price_bps: u64,
     min_deposit: u64,
     max_deposit: u64,
+    travel_rule_required: bool,
 ) -> Result<()> {
     require!(nav_price_bps > 0, VaultError::InvalidNav);
+    require!(min_deposit <= max_deposit, VaultError::DepositTooSmall);
 
     let asset_mint_key = ctx.accounts.asset_mint.key();
 
@@ -51,6 +53,7 @@ pub fn handler(
     vault.min_deposit = min_deposit;
     vault.max_deposit = max_deposit;
     vault.ticker = ticker;
+    vault.travel_rule_required = travel_rule_required;
     vault.paused = false;
 
     msg!(
