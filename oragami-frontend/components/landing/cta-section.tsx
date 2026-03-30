@@ -1,110 +1,80 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
-import { AnimatedTetrahedron } from "./animated-tetrahedron";
 
 export function CtaSection() {
-  const [isVisible, setIsVisible] = useState(false);
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [visible, setVisible] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setIsVisible(true); },
-      { threshold: 0.2 }
-    );
-    if (sectionRef.current) observer.observe(sectionRef.current);
-    return () => observer.disconnect();
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setVisible(true); }, { threshold: 0.2 });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
   }, []);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setMousePosition({
-      x: ((e.clientX - rect.left) / rect.width) * 100,
-      y: ((e.clientY - rect.top) / rect.height) * 100,
-    });
-  };
-
   return (
-    <section ref={sectionRef} className="relative py-24 lg:py-32 overflow-hidden">
+    <section ref={ref} className="relative py-24 lg:py-32">
       <div className="max-w-[1400px] mx-auto px-6 lg:px-12">
-        <div
-          className={`relative border border-foreground transition-all duration-1000 ${
-            isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-          onMouseMove={handleMouseMove}
-        >
-          <div
-            className="absolute inset-0 opacity-10 pointer-events-none transition-opacity duration-300"
-            style={{
-              background: `radial-gradient(600px circle at ${mousePosition.x}% ${mousePosition.y}%, rgba(0,0,0,0.15), transparent 40%)`
-            }}
-          />
+        <div className={`border border-foreground p-10 lg:p-20 transition-all duration-700 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}>
 
-          <div className="relative z-10 px-8 lg:px-16 py-16 lg:py-24">
-            <div className="flex flex-col lg:flex-row items-center justify-between gap-12">
-              <div className="flex-1">
-                <h2 className="text-4xl lg:text-7xl font-display tracking-tight mb-8 leading-[0.95]">
-                  Ready to put
-                  <br />
-                  capital to work?
-                </h2>
+          <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
 
-                <p className="text-xl text-muted-foreground mb-6 leading-relaxed max-w-xl">
-                  Two products. One onboarding. Deposit USDC into the yield vault and earn Gold NAV appreciation + Solstice USX carry. Or deposit tokenized assets into the custody vault and transfer positions between credentialed institutions with zero counterparty risk.
-                </p>
-
-                <div className="space-y-2 font-mono text-sm text-muted-foreground mb-10">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                    KYC · AML · Travel Rule enforced at the contract level
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                    NAV priced by SIX Exchange via authenticated mTLS feed
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                    Vault holds custody — no counterparty risk between institutions
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-start gap-4">
-                  <Button
-                    size="lg"
-                    className="bg-foreground hover:bg-foreground/90 text-background px-8 h-14 text-base rounded-full group"
-                    asChild
-                  >
-                    <a href="/app">
-                      Open Vault on Devnet
-                      <ArrowRight className="w-4 h-4 ml-2 transition-transform group-hover:translate-x-1" />
-                    </a>
-                  </Button>
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="h-14 px-8 text-base rounded-full border-foreground/20 hover:bg-foreground/5"
-                    asChild
-                  >
-                    <a href="#how-it-works">View architecture</a>
-                  </Button>
-                </div>
-
-                <p className="text-sm text-muted-foreground mt-8 font-mono">
-                  Solana devnet · oragami-vault: ihUcHpWk... · multi-asset-vault: 6Mbzwuw8...
-                </p>
-              </div>
-
-              <div className="hidden lg:flex items-center justify-center w-[500px] h-[500px] -mr-16">
-                <AnimatedTetrahedron />
+            {/* Left */}
+            <div className="space-y-8">
+              <h2 className="text-4xl lg:text-6xl font-display tracking-tight leading-[0.95]">
+                Start earning on your gold exposure today.
+              </h2>
+              <p className="text-lg text-muted-foreground leading-relaxed">
+                Connect your institution wallet, get credentialed in under a minute, and deposit into the yield vault or custody vault on Solana devnet.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <a
+                  href="/onboard/connect"
+                  className="inline-flex items-center justify-center gap-2 px-8 h-14 bg-foreground text-background font-mono text-xs tracking-widest uppercase hover:bg-foreground/90 transition-colors group"
+                >
+                  Get Credentialed
+                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                </a>
+                <a
+                  href="/app"
+                  className="inline-flex items-center justify-center gap-2 px-8 h-14 border border-foreground/30 font-mono text-xs tracking-widest uppercase hover:border-foreground transition-colors"
+                >
+                  Open Vault
+                </a>
               </div>
             </div>
-          </div>
 
-          <div className="absolute top-0 right-0 w-32 h-32 border-b border-l border-foreground/10" />
-          <div className="absolute bottom-0 left-0 w-32 h-32 border-t border-r border-foreground/10" />
+            {/* Right — what you get */}
+            <div className="space-y-4">
+              {[
+                {
+                  label: "Yield Vault",
+                  items: ["Deposit USDC", "Receive cVAULT at live gold NAV", "Earn ~5% APY from Solstice USX", "Redeem any time at current NAV"],
+                },
+                {
+                  label: "Custody Vault",
+                  items: ["Deposit tokenized Gold or Silver", "Vault holds on-chain custody", "Transfer positions to other institutions", "Both sides KYC-verified before transfer"],
+                },
+              ].map((product) => (
+                <div key={product.label} className="border border-foreground/10 p-5 space-y-3">
+                  <p className="font-mono text-xs tracking-widest text-muted-foreground uppercase">{product.label}</p>
+                  <ul className="space-y-1.5">
+                    {product.items.map((item) => (
+                      <li key={item} className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <span className="w-1 h-1 rounded-full bg-foreground/40 shrink-0" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              <p className="font-mono text-xs text-muted-foreground/50 pt-2">
+                Solana devnet · ihUcHpWk... · 6Mbzwuw8...
+              </p>
+            </div>
+
+          </div>
         </div>
       </div>
     </section>
